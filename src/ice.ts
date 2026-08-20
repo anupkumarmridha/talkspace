@@ -24,11 +24,11 @@ const DEFAULT_STUN: IceServer[] = [
 export async function getIceServers(
   env: Env,
   identifier: string,
-): Promise<{ iceServers: IceServer[]; hasTurn: boolean }> {
+): Promise<{ iceServers: IceServer[]; hasTurn: boolean; turnSource: string }> {
   if (env.TURN_KEY_ID && env.TURN_KEY_API_TOKEN) {
     const turn = await mintCloudflareTurn(env.TURN_KEY_ID, env.TURN_KEY_API_TOKEN, identifier);
     if (turn.length > 0) {
-      return { iceServers: [...DEFAULT_STUN, ...turn], hasTurn: true };
+      return { iceServers: [...DEFAULT_STUN, ...turn], hasTurn: true, turnSource: "cloudflare" };
     }
   }
 
@@ -43,10 +43,68 @@ export async function getIceServers(
         },
       ],
       hasTurn: true,
+      turnSource: "configured",
     };
   }
 
-  return { iceServers: DEFAULT_STUN, hasTurn: false };
+  // Nothing configured: fall back to a free community relay so a fresh clone
+  // works for everyone out of the box, not just the ~85% whose network allows
+  // a direct path.
+  if (env.DISABLE_FALLBACK_TURN !== "1") {
+    const fallback = await communityTurn();
+    if (fallback.length > 0) {
+      return { iceServers: [...DEFAULT_STUN, ...fallback], hasTurn: true, turnSource: "community" };
+    }
+  }
+
+  return { iceServers: DEFAULT_STUN, hasTurn: false, turnSource: "none" };
+}
+
+/**
+ * Free community TURN, used only when nothing better is configured.
+ *
+ * `turn.elixir-webrtc.org` (the Rel project) hands out short-lived credentials
+ * without a signup, which is what makes a zero-configuration deployment
+ * possible at all. Treat it as a courtesy, not infrastructure:
+ *
+ *  - It is volunteer-run with no SLA and could disappear tomorrow. Every
+ *    failure path here degrades to STUN rather than breaking the call.
+ *  - It offers UDP only, so it rescues symmetric-NAT users but not networks
+ *    that block UDP outright. Configured TURN over TCP/443 still covers more.
+ *  - A relay sees packet timing and IP addresses. It cannot see media: that is
+ *    DTLS-SRTP, encrypted end to end between the browsers.
+ *
+ * Credentials are cached for most of their lifetime so we make roughly two
+ * requests an hour per isolate rather than one per visitor.
+ */
+let cachedFallback: { servers: IceServer[]; expires: number } | null = null;
+
+async function communityTurn(): Promise<IceServer[]> {
+  if (cachedFallback && cachedFallback.expires > Date.now()) return cachedFallback.servers;
+
+  try {
+    const res = await fetch("https://turn.elixir-webrtc.org/?service=turn&username=talkspace", {
+      method: "POST",
+      // A slow third party must never hold up joining a call.
+      signal: AbortSignal.timeout(2500),
+    });
+    if (!res.ok) return [];
+
+    const body = (await res.json()) as { uris?: string[]; username?: string; password?: string; ttl?: number };
+    if (!body.uris?.length || !body.username || !body.password) return [];
+
+    const servers: IceServer[] = [
+      { urls: body.uris, username: body.username, credential: body.password },
+    ];
+    const ttl = typeof body.ttl === "number" ? body.ttl : 600;
+    cachedFallback = { servers, expires: Date.now() + Math.max(60, ttl - 120) * 1000 };
+
+    return servers;
+  } catch {
+    // Unreachable or timed out: STUN only, and the client says so if a peer
+    // then fails to connect.
+    return [];
+  }
 }
 
 async function mintCloudflareTurn(

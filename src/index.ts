@@ -21,6 +21,8 @@ export interface Env {
   TURN_URLS?: string;
   TURN_USERNAME?: string;
   TURN_CREDENTIAL?: string;
+  /** Set to "1" to opt out of the free community relay fallback. */
+  DISABLE_FALLBACK_TURN?: string;
 }
 
 /**
@@ -111,9 +113,9 @@ async function route(
   }
 
   if (path === "/api/ice" && request.method === "GET") {
-    const { iceServers, hasTurn } = await getIceServers(env, clientKey(request));
+    const { iceServers, hasTurn, turnSource } = await getIceServers(env, clientKey(request));
     // Credentials are short-lived and per-user; never let a proxy retain them.
-    return json({ iceServers, hasTurn }, 200, { "Cache-Control": "no-store" });
+    return json({ iceServers, hasTurn, turnSource }, 200, { "Cache-Control": "no-store" });
   }
 
   if (path === "/api/rooms" && request.method === "GET") {

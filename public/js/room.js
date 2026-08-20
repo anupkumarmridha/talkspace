@@ -186,6 +186,7 @@ async function join() {
     state.room = room;
 
     state.hasTurn = Boolean(ice.hasTurn);
+    state.turnSource = ice.turnSource ?? "none";
     if (!state.hasTurn) {
       // Worth saying plainly: without a relay, a minority of networks simply
       // cannot establish a direct path.
@@ -561,13 +562,17 @@ function wireMesh(mesh) {
     if (detail.state === "failed") {
       const record = state.peers.get(detail.peerId);
       const who = record?.info.name ?? "A participant";
-      toast(
-        state.hasTurn
-          ? `Could not connect to ${who} — retrying`
-          : `Could not connect to ${who}. This network needs a TURN relay.`,
-        "error",
-        7000,
-      );
+
+      // Be specific about why, because each case has a different remedy.
+      let why = "";
+      if (!state.hasTurn) why = " This network needs a TURN relay.";
+      else if (state.turnSource === "community") {
+        // The free fallback is UDP-only, so it cannot rescue a network that
+        // blocks UDP outright -- that needs TURN over TCP/443.
+        why = " If this network blocks UDP, a TCP relay is needed.";
+      }
+
+      toast(`Could not connect to ${who}.${why || " Retrying."}`, "error", 7000);
     }
   });
 

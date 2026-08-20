@@ -169,7 +169,7 @@ To test a real call you need two participants. Any of these work:
 Start the dev server in one terminal, then in another:
 
 ```bash
-npm test              # everything: typecheck + 7 suites
+npm test              # everything: typecheck + 8 suites
 ```
 
 Or individually:
@@ -184,6 +184,7 @@ Or individually:
 | `npm run test:browser` | Two real Chrome instances: connection, media, chat |
 | `npm run test:mesh` | Three peers: every pair connected, ladder, cleanup |
 | `npm run test:resilience` | Reconnect after a dropped socket; video subscription caps |
+| `npm run test:turn` | Four-person call end to end; relay-only connection |
 
 The browser suites drive real Chrome with fake capture devices, and assert on
 `RTCPeerConnection` state and RTP counters rather than on the DOM alone. They
@@ -203,12 +204,30 @@ That is the whole deployment. Durable Objects with the SQLite backend are
 available on the Workers Free plan, and static assets are served from
 Cloudflare's edge without invoking the Worker.
 
-### Adding a TURN server (strongly recommended)
+### Relays: it works out of the box
 
-Roughly 10–20% of real users sit behind symmetric NAT or a firewall that blocks
-direct UDP. Those calls **cannot connect** without a relay. The app now says so
-explicitly when a peer fails, rather than leaving a black tile, but the fix is
-to configure TURN.
+Roughly 10–20% of users sit behind symmetric NAT or a firewall that blocks
+direct UDP, and those calls cannot connect peer-to-peer without a relay.
+
+**No setup is required.** With nothing configured the Worker fetches
+short-lived credentials from [Rel](https://github.com/elixir-webrtc/rel), a free
+community TURN service that issues them without a signup, and a fresh clone
+therefore works for everyone rather than only the ~85% on permissive networks.
+ICE only uses a relay when a direct path fails, so most calls never touch it.
+
+**What a relay can and cannot see.** It forwards opaque UDP. Media is DTLS-SRTP
+terminating in the two browsers, so a relay cannot read or alter audio, video or
+chat — tampering would fail SRTP authentication. DTLS fingerprints are exchanged
+through *this* app's signalling, not through the relay, and are covered by the
+safety number, so a relay cannot MITM either. What it does learn is that two IP
+addresses exchanged packets, and when. That is a real if modest metadata leak,
+limited to the minority of connections that need relaying.
+
+Opt out with `DISABLE_FALLBACK_TURN=1`, which falls back to STUN only.
+
+**For anything serious, configure your own.** The community relay is
+volunteer-run with no SLA, and offers UDP only — so it rescues symmetric-NAT
+users but not networks that block UDP outright, which needs TURN over TCP/443.
 
 One manual step is unavoidable: the OAuth token from `wrangler login` has no
 Realtime scope, so a TURN key cannot be created with credentials the CLI
@@ -335,8 +354,8 @@ Room lifetime (`ROOM_TTL_MS`) and the removal cool-off (`KICK_BLOCK_MS`) are in
 - **At most 4 remote cameras visible at once**, chosen by pin, screen share,
   then recent speech. Everyone else shows as an avatar — this is the trade that
   buys the higher headcount.
-- **No TURN by default** — a minority of networks will fail to connect until you
-  run `npm run setup:turn`. Failures are now reported rather than silent.
+- **The default relay is a free community service** (UDP only, no SLA). Fine
+  for getting started; run `npm run setup:turn` for anything you depend on.
 - **Chat is not persisted.** That is deliberate: the server stores no messages,
   so someone joining late sees no history.
 - **Host is the first joiner**, passing to the longest-present participant when
