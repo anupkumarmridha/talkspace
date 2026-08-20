@@ -51,10 +51,21 @@ plus eleven small audio streams, instead of eleven of each.
 Past twelve you genuinely need an SFU, which means egress billing and a
 different architecture. That is the point at which this stops being free.
 
-**What keeps idle rooms free:** an empty room stops its heartbeat entirely and
-schedules a single wake-up at expiry. An unused room costs one alarm per day,
-not one every 45 seconds. WebSocket keepalives are answered by the runtime's
-auto-response, so they never wake your code at all.
+**What keeps it inside the free tier.** Durable Objects bill per request:
+alarms and RPC calls count 1:1, incoming WebSocket messages count 20:1, and
+outgoing messages and auto-response replies are free. So the recurring cost of
+a call is almost entirely its lobby heartbeat, not its traffic:
+
+| One 2-person call, running 24/7 | Requests/day | Free quota | Concurrent rooms |
+|---|---|---|---|
+| Unlisted room (no heartbeat) | ~360 | 0.4% | ~275 |
+| Public room (5 min heartbeat) | ~935 | 0.9% | ~105 |
+
+An empty room drops its heartbeat and schedules a single wake-up at expiry, and
+an unlisted room never heartbeats at all — it is not in the directory, so there
+is nothing to keep fresh. Keepalive pings use `setWebSocketAutoResponse`, so
+they never wake your code or accrue duration. Duration comes to roughly
+1 GB-s/day against a 13,000 GB-s allowance.
 
 ---
 

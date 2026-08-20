@@ -17,8 +17,19 @@ import {
 } from "./protocol";
 import { hashPasscode, randomId, timingSafeEqual } from "./crypto";
 
-/** Re-announce to the lobby well inside ROOM_IDLE_TIMEOUT_MS. */
-const HEARTBEAT_MS = 45_000;
+/**
+ * Re-announce to the lobby well inside ROOM_IDLE_TIMEOUT_MS.
+ *
+ * This is the single largest recurring cost of an occupied room: an alarm is
+ * billed as a Durable Object request, and each one also makes an RPC call to
+ * the lobby, so the rate is doubled. At 45s that was ~3,800 requests a day for
+ * one continuous call; at 5 minutes it is ~580. The only thing traded away is
+ * how quickly a crashed object's stale lobby entry disappears.
+ *
+ * Unlisted rooms skip it entirely -- they are not in the directory, so there
+ * is nothing to keep fresh.
+ */
+const HEARTBEAT_MS = 300_000;
 
 const DEFAULT_STATE: PeerState = { mic: true, cam: false, screen: false };
 
@@ -344,6 +355,14 @@ export class SignalRoom extends DurableObject<Env> {
       // here and the only remaining wake-up is expiry -- an idle room costs
       // one alarm per day, not one every 45 seconds.
       await lobby.remove(meta.id);
+      await this.ctx.storage.setAlarm(meta.expiresAt);
+      return;
+    }
+
+    // An unlisted room never appears in the directory, so it needs no
+    // heartbeat at all -- only the one wake-up at expiry. A private two-person
+    // call therefore costs essentially nothing per hour, however long it runs.
+    if (!meta.isPublic) {
       await this.ctx.storage.setAlarm(meta.expiresAt);
       return;
     }

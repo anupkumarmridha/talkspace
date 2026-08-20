@@ -34,7 +34,7 @@
     // however many people are present. That is what makes 12 workable here
     // where a naive mesh runs out at about 6.
     "MAX_PEERS_PER_ROOM": "12",
-    "ROOM_IDLE_TIMEOUT_MS": "120000"
+    "ROOM_IDLE_TIMEOUT_MS": "900000"
   },
 
   "observability": {
