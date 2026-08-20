@@ -28,9 +28,12 @@
   ],
 
   "vars": {
-    // Mesh topology: each peer uploads (N-1) copies of its stream, so this
-    // stays low on purpose. Raise it only if you move to an SFU.
-    "MAX_PEERS_PER_ROOM": "8",
+    // Mesh topology. Audio still goes to everyone, but video is subscribed to
+    // by the receiver (see MAX_VIDEO_SUBSCRIPTIONS), so upload no longer
+    // scales linearly with the room: a peer sends at most four camera streams
+    // however many people are present. That is what makes 12 workable here
+    // where a naive mesh runs out at about 6.
+    "MAX_PEERS_PER_ROOM": "12",
     "ROOM_IDLE_TIMEOUT_MS": "120000"
   },
 

@@ -63,6 +63,32 @@ export function videoProfileFor(peerCount) {
 }
 
 /**
+ * How many remote cameras this client asks for at once.
+ *
+ * The mesh bottleneck is upload, and a peer only has to upload video to
+ * people who are actually going to display it. Capping what each client
+ * *requests* therefore caps what everyone else has to *send*: in a twelve
+ * person room each peer uploads four video streams rather than eleven.
+ *
+ * Faces beyond this are shown as avatars, which is also roughly the point at
+ * which a phone-sized tile stops conveying a face anyway.
+ */
+export const MAX_VIDEO_SUBSCRIPTIONS = 4;
+
+/**
+ * Audio, unlike video, goes to everyone -- it is the part of a call that
+ * cannot degrade. But 96 kbps x 15 peers is 1.4 Mbps of upload on its own, so
+ * the per-stream budget still has to come down as the room grows. Opus at
+ * 40 kbps mono is entirely intelligible for speech.
+ */
+export function audioBitrateFor(peerCount) {
+  const others = Math.max(1, peerCount - 1);
+  if (others <= 5) return 96_000;
+  if (others <= 9) return 64_000;
+  return 40_000;
+}
+
+/**
  * Phones are assumed here rather than detected, because the signal that
  * matters (is there a hardware H.264 encoder) is not exposed to JS. Coarse
  * but the failure mode is mild: a slightly different codec choice.

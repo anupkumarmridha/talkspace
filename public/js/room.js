@@ -14,6 +14,7 @@ import { Sheet } from "./sheet.js";
 import { EventChain, createIdentity, decryptFrom, deriveSharedKey, encryptFor, safetyNumber } from "./e2ee.js";
 import { createVoiceDetector } from "./vad.js";
 import {
+  MAX_VIDEO_SUBSCRIPTIONS,
   RemoteAudio,
   audioContext,
   listAudioOutputs,
@@ -47,6 +48,8 @@ const state = {
   joined: false,
   hostId: "",
   waitingDismissed: false,
+  /** Peers whose camera we are currently asking for. */
+  subscribed: new Set(),
 };
 
 const isHost = () => state.self?.id && state.self.id === state.hostId;
@@ -182,7 +185,8 @@ async function join() {
 
     state.room = room;
 
-    if (!ice.hasTurn) {
+    state.hasTurn = Boolean(ice.hasTurn);
+    if (!state.hasTurn) {
       // Worth saying plainly: without a relay, a minority of networks simply
       // cannot establish a direct path.
       console.info("No TURN server configured; peers behind symmetric NAT may fail to connect.");
@@ -240,13 +244,44 @@ async function startLocalMedia() {
   if (await hasMultipleCameras()) $("#flip-btn").hidden = false;
 }
 
-function openSignal(token) {
+function openSignal(firstToken) {
   const scheme = location.protocol === "https:" ? "wss" : "ws";
-  const url = `${scheme}://${location.host}/ws/room/${encodeURIComponent(roomId)}?token=${encodeURIComponent(
-    token,
-  )}&pub=${encodeURIComponent(state.identity.pub)}`;
 
-  const signal = new Signal(url);
+  // Consumed once, then every later attempt mints a fresh grant. The token is
+  // only valid for two minutes, so a socket URL captured at join time is
+  // unusable by the time a real-world reconnect happens.
+  let pending = firstToken;
+
+  async function socketUrl() {
+    let token = pending;
+    pending = null;
+
+    if (!token) {
+      try {
+        ({ token } = await api("/api/join", {
+          method: "POST",
+          body: JSON.stringify({
+            roomId,
+            name: state.self?.name ?? nameInput.value.trim(),
+            passcode: $("#prejoin-passcode").value || undefined,
+          }),
+        }));
+      } catch (err) {
+        // 403/409/410 mean we are no longer welcome; retrying cannot help.
+        if ([403, 409, 410].includes(err.status)) {
+          err.terminal = true;
+          err.code = err.status === 409 ? 4001 : 4002;
+        }
+        throw err;
+      }
+    }
+
+    return `${scheme}://${location.host}/ws/room/${encodeURIComponent(roomId)}?token=${encodeURIComponent(
+      token,
+    )}&pub=${encodeURIComponent(state.identity.pub)}`;
+  }
+
+  const signal = new Signal(socketUrl);
   state.signal = signal;
 
   signal.addEventListener("welcome", (e) => onWelcome(e.detail));
@@ -519,6 +554,21 @@ function wireMesh(mesh) {
       tile.root.dataset.connection = detail.state;
       tile.spinner.hidden = detail.state === "connected";
     }
+
+    // A failed peer used to be a silent black tile. On a network that blocks
+    // direct UDP the call simply never starts, and without saying why the
+    // only signal is nothing happening -- the worst kind of failure.
+    if (detail.state === "failed") {
+      const record = state.peers.get(detail.peerId);
+      const who = record?.info.name ?? "A participant";
+      toast(
+        state.hasTurn
+          ? `Could not connect to ${who} — retrying`
+          : `Could not connect to ${who}. This network needs a TURN relay.`,
+        "error",
+        7000,
+      );
+    }
   });
 
   mesh.addEventListener("fingerprint", async ({ detail }) => {
@@ -574,9 +624,16 @@ async function onRemoteTrack({ peerId, slot, stream, track }) {
     // flag over the wire: accurate, and it keeps working while signalling is
     // reconnecting.
     record.detector?.destroy();
-    record.detector = await createVoiceDetector(stream, ({ speaking }) =>
-      setSpeaking(peerId, speaking),
-    ).catch(() => null);
+    record.detector = await createVoiceDetector(stream, ({ speaking }) => {
+      setSpeaking(peerId, speaking);
+
+      // Remember when each peer last spoke. Video subscriptions follow the
+      // conversation, so the people actually talking are the ones whose
+      // cameras get the bandwidth.
+      if (!speaking) return;
+      record.lastSpoke = Date.now();
+      scheduleSubscriptionRefresh();
+    }).catch(() => null);
     return;
   }
 
@@ -828,8 +885,66 @@ async function startSelfDetector() {
   }).catch(() => null);
 }
 
+/**
+ * Decide whose camera we actually want, and tell them.
+ *
+ * Priority: anyone sharing a screen, then the pinned tile, then whoever spoke
+ * most recently. Everyone beyond the cap is shown as an avatar and their
+ * upload is spared entirely.
+ */
+/**
+ * Speech is bursty, and renegotiating who to subscribe to on every syllable
+ * would thrash. Coalesce, and only act once the room is big enough for
+ * subscriptions to matter at all.
+ */
+let subscriptionTimer = null;
+
+function scheduleSubscriptionRefresh() {
+  if (subscriptionTimer || state.peers.size <= MAX_VIDEO_SUBSCRIPTIONS) return;
+  subscriptionTimer = setTimeout(() => {
+    subscriptionTimer = null;
+    refreshVideoSubscriptions();
+  }, 2000);
+}
+
+function refreshVideoSubscriptions() {
+  if (!state.mesh) return;
+
+  const pinnedPeer = state.pinned ? state.pinned.replace(/:screen$/, "") : null;
+
+  // Pinning is an explicit "show me only this", so honour it exactly.
+  if (pinnedPeer && pinnedPeer !== "self" && state.peers.has(pinnedPeer)) {
+    state.mesh.setVideoSubscriptions([pinnedPeer]);
+    return;
+  }
+
+  const candidates = [...state.peers.values()]
+    .map((r) => ({
+      id: r.info.id,
+      sharing: r.info.state?.screen === true,
+      // Incumbency bonus. In a lively call several people are speaking within
+      // any given window, so a pure most-recent-speaker ranking reshuffles
+      // constantly -- and every reshuffle is a replaceTrack, which restarts
+      // an encoder and produces a visible hitch. Treating whoever is already
+      // on screen as slightly more recent means a newcomer has to be clearly
+      // more active to displace them.
+      lastSpoke: (r.lastSpoke ?? 0) + (state.subscribed.has(r.info.id) ? 8000 : 0),
+      joinedAt: r.info.joinedAt,
+    }))
+    .sort((a, b) => {
+      if (a.sharing !== b.sharing) return a.sharing ? -1 : 1;
+      if (a.lastSpoke !== b.lastSpoke) return b.lastSpoke - a.lastSpoke;
+      return a.joinedAt - b.joinedAt;
+    });
+
+  const chosen = candidates.slice(0, MAX_VIDEO_SUBSCRIPTIONS).map((c) => c.id);
+  state.subscribed = new Set(chosen);
+  state.mesh.setVideoSubscriptions(chosen);
+}
+
 function refreshAll() {
   refreshGridCount();
+  refreshVideoSubscriptions();
   renderPeople();
   $("#people-count").textContent = String(state.peers.size + 1);
 
@@ -1042,7 +1157,7 @@ $("#screen-btn").addEventListener("click", async () => {
     tile.video.muted = true;
     state.pinned = "self:screen";
 
-    $("#screen-btn").textContent = "Stop sharing";
+    setScreenButton(true);
     sheets.more.close();
     refreshAll();
     broadcastState();
@@ -1060,9 +1175,27 @@ async function stopScreenShare() {
   removeTile("self:screen");
   if (state.pinned === "self:screen") state.pinned = null;
 
-  $("#screen-btn").textContent = "Share screen";
+  setScreenButton(false);
   refreshAll();
   broadcastState();
+}
+
+/**
+ * Relabel without destroying the icon.
+ *
+ * Assigning textContent to the button would replace *all* its children,
+ * including the inline <svg>, leaving a label with no icon after the first
+ * toggle. Only the trailing text node is replaced here.
+ */
+function setScreenButton(sharing) {
+  const button = $("#screen-btn");
+  const label = sharing ? "Stop sharing" : "Share screen";
+
+  const text = [...button.childNodes].find((n) => n.nodeType === Node.TEXT_NODE && n.textContent.trim());
+  if (text) text.textContent = ` ${label} `;
+  else button.append(document.createTextNode(` ${label} `));
+
+  button.setAttribute("aria-pressed", String(sharing));
 }
 
 // --- Audio output ----------------------------------------------------------
@@ -1366,6 +1499,12 @@ function onDataChannelMessage(peerId, data) {
   // Ignore a duplicate that also arrived over the fallback path.
   if (record.seen.has(data.id)) return;
   record.seen.add(data.id);
+  // Bounded: only recent ids can plausibly arrive twice (the duplicate is a
+  // message that crossed both the data channel and the relay), so an
+  // unbounded set would just leak across a long call.
+  if (record.seen.size > 300) {
+    for (const id of [...record.seen].slice(0, 100)) record.seen.delete(id);
+  }
 
   receiveChat(record.info.name, data.text, data.ts);
 }

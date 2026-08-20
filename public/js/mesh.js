@@ -24,6 +24,7 @@
 import {
   BITRATE,
   applyEncoding,
+  audioBitrateFor,
   preferOpus,
   preferVideoCodec,
   setContentHint,
@@ -96,12 +97,16 @@ export class Mesh extends EventTarget {
     const sender = peer.tx[slot]?.sender;
     if (!sender) return;
 
+    // Respect an existing unsubscribe: turning our camera on must not start
+    // pushing video at someone who has told us they are not displaying it.
+    const effective = slot === "camera" && !peer.sendingVideo ? null : (track ?? null);
+
     try {
-      await sender.replaceTrack(track ?? null);
+      await sender.replaceTrack(effective);
     } catch {
       return; // connection is tearing down
     }
-    if (track) await this.#applyEncodingFor(peer, slot);
+    if (effective) await this.#applyEncodingFor(peer, slot);
   }
 
   async #applyEncodingFor(peer, slot) {
@@ -109,10 +114,9 @@ export class Mesh extends EventTarget {
     if (!sender) return;
 
     if (slot === "audio") {
-      // Audio is never throttled by peer count: it is small, and it is the
-      // part of a call that must not degrade.
+      // Audio always goes to everyone; only its per-stream budget tapers.
       await applyEncoding(sender, {
-        maxBitrate: BITRATE.audio,
+        maxBitrate: audioBitrateFor(this.#peers.size + 1),
         priority: "high",
       });
       return;
@@ -139,11 +143,54 @@ export class Mesh extends EventTarget {
     });
   }
 
-  /** Re-run the video ladder after someone joins or leaves. */
+  /** Re-run the ladder after someone joins or leaves. */
   async rebalance() {
     await Promise.all(
-      [...this.#peers.values()].map((peer) => this.#applyEncodingFor(peer, "camera")),
+      [...this.#peers.values()].flatMap((peer) => [
+        this.#applyEncodingFor(peer, "audio"),
+        this.#applyEncodingFor(peer, "camera"),
+      ]),
     );
+  }
+
+  // --- Receiver-driven video subscription -----------------------------------
+
+  /**
+   * Declare which peers' cameras this client wants to display.
+   *
+   * Upload is the mesh bottleneck, and there is no point uploading video to
+   * someone who is not rendering it. Each peer tells the others whether it
+   * wants their camera; senders pause the camera track for anyone who does
+   * not. In a twelve-person grid this turns eleven video uploads into four.
+   *
+   * Audio is deliberately never unsubscribed -- you must always hear
+   * everyone, including whoever is off-screen.
+   */
+  setVideoSubscriptions(wantedPeerIds) {
+    const wanted = new Set(wantedPeerIds);
+
+    for (const peer of this.#peers.values()) {
+      const want = wanted.has(peer.id);
+      if (peer.wantsOurVideo === want) continue;
+      peer.wantsOurVideo = want;
+      this.#send(peer.id, { kind: "video-request", want });
+    }
+  }
+
+  /** Act on a peer telling us whether to send them our camera. */
+  async #handleVideoRequest(peer, want) {
+    if (peer.sendingVideo === want) return;
+    peer.sendingVideo = want;
+
+    const sender = peer.tx.camera?.sender;
+    if (!sender) return;
+
+    try {
+      await sender.replaceTrack(want ? (this.#local.camera ?? null) : null);
+      if (want && this.#local.camera) await this.#applyEncodingFor(peer, "camera");
+    } catch {
+      /* connection is tearing down */
+    }
   }
 
   // --- Peer lifecycle -------------------------------------------------------
@@ -179,6 +226,10 @@ export class Mesh extends EventTarget {
       channel: null,
       streams: {},
       fingerprint: "",
+      /** Whether this peer currently wants our camera. Assumed until told. */
+      sendingVideo: true,
+      /** Whether we last told them we want theirs. */
+      wantsOurVideo: undefined,
     };
     this.#peers.set(peerId, peer);
 
@@ -213,6 +264,25 @@ export class Mesh extends EventTarget {
 
     this.#wireConnection(peer);
 
+    // The polite peer waits to be offered to. If that offer never arrives --
+    // the other side crashed between joining and negotiating, or its frame
+    // was lost -- it would wait forever. Take over after a grace period.
+    if (peer.polite) {
+      peer.rescue = setTimeout(() => {
+        if (!this.#peers.has(peerId) || peer.pc.remoteDescription) return;
+        console.warn("no offer from", peerId, "- taking over negotiation");
+        peer.tx.audio = pc.addTransceiver("audio", { direction: "sendrecv" });
+        peer.tx.camera = pc.addTransceiver("video", { direction: "sendrecv" });
+        peer.tx.screen = pc.addTransceiver("video", { direction: "sendrecv" });
+        preferOpus(peer.tx.audio);
+        preferVideoCodec(peer.tx.camera);
+        preferVideoCodec(peer.tx.screen);
+        for (const kind of ["mic", "camera", "screen"]) {
+          if (this.#local[kind]) void this.#applyTrack(peer, kind, this.#local[kind]);
+        }
+      }, 6000);
+    }
+
     // Attach whatever we are already capturing.
     for (const kind of ["mic", "camera", "screen"]) {
       const track = this.#local[kind];
@@ -226,6 +296,7 @@ export class Mesh extends EventTarget {
     const peer = this.#peers.get(peerId);
     if (!peer) return;
     this.#peers.delete(peerId);
+    if (peer.rescue) clearTimeout(peer.rescue);
 
     try {
       peer.channel?.close();
@@ -359,6 +430,11 @@ export class Mesh extends EventTarget {
     const { pc } = peer;
 
     try {
+      if (payload.kind === "video-request") {
+        await this.#handleVideoRequest(peer, payload.want === true);
+        return;
+      }
+
       if (payload.kind === "desc" && payload.desc) {
         const description = payload.desc;
         const isOffer = description.type === "offer";
@@ -419,6 +495,11 @@ export class Mesh extends EventTarget {
    * two-way media immediately rather than triggering a renegotiation.
    */
   async #adoptTransceivers(peer) {
+    // An offer arrived, so the takeover timer is no longer needed.
+    if (peer.rescue) {
+      clearTimeout(peer.rescue);
+      peer.rescue = null;
+    }
     if (peer.tx.audio) return; // already owned (we were the offerer)
 
     const kindOf = (t) => t.receiver?.track?.kind ?? t.sender?.track?.kind ?? "";

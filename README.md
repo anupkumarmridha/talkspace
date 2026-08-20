@@ -31,10 +31,25 @@ full mesh. Cloudflare only relays a few kilobytes of signalling per call.
 The cost of a video call normally *is* the egress. With a mesh there is none,
 so the bill is a handful of Durable Object requests.
 
-The trade-off is honest and worth stating: each peer uploads one copy of its
-video **per other participant**. That is fine up to ~6 people and then stops
-being fine. `MAX_PEERS_PER_ROOM` defaults to 8. Beyond that you need an SFU,
-which means egress costs and a different architecture.
+A naive mesh has each peer upload one copy of its video **per other
+participant**, which stops working at around six people. Two things push that
+out to twelve without adding a server:
+
+**Receiver-driven video subscription.** There is no point uploading video to
+someone who is not displaying it. Each client tells the others whose cameras it
+actually wants — the pinned tile, whoever is sharing a screen, then the most
+recent speakers — capped at four. Everyone else's camera is paused *for that
+recipient specifically*, and they appear as an avatar. This is what an SFU does
+with its forwarding decisions, done by the receivers instead.
+
+**Audio never unsubscribes**, because you must always hear everyone; its
+per-stream bitrate tapers instead (96 → 64 → 40 kbps as the room grows).
+
+The result: a peer in a twelve-person room uploads at most four video streams
+plus eleven small audio streams, instead of eleven of each.
+
+Past twelve you genuinely need an SFU, which means egress billing and a
+different architecture. That is the point at which this stops being free.
 
 **What keeps idle rooms free:** an empty room stops its heartbeat entirely and
 schedules a single wake-up at expiry. An unused room costs one alarm per day,
@@ -154,7 +169,7 @@ To test a real call you need two participants. Any of these work:
 Start the dev server in one terminal, then in another:
 
 ```bash
-npm test              # everything: typecheck + 6 suites
+npm test              # everything: typecheck + 7 suites
 ```
 
 Or individually:
@@ -168,6 +183,7 @@ Or individually:
 | `npm run test:crypto` | ECDH/AES-GCM, AAD binding, safety number, hash chain |
 | `npm run test:browser` | Two real Chrome instances: connection, media, chat |
 | `npm run test:mesh` | Three peers: every pair connected, ladder, cleanup |
+| `npm run test:resilience` | Reconnect after a dropped socket; video subscription caps |
 
 The browser suites drive real Chrome with fake capture devices, and assert on
 `RTCPeerConnection` state and RTP counters rather than on the DOM alone. They
@@ -187,23 +203,40 @@ That is the whole deployment. Durable Objects with the SQLite backend are
 available on the Workers Free plan, and static assets are served from
 Cloudflare's edge without invoking the Worker.
 
-### Adding a TURN server (recommended)
+### Adding a TURN server (strongly recommended)
 
 Roughly 10–20% of real users sit behind symmetric NAT or a firewall that blocks
-direct UDP. Those calls **cannot connect** without a relay. Without TURN
-everything still works for most people; for the rest it silently fails to
-connect, which is the worst kind of failure.
+direct UDP. Those calls **cannot connect** without a relay. The app now says so
+explicitly when a peer fails, rather than leaving a black tile, but the fix is
+to configure TURN.
 
-Cloudflare Realtime TURN has a free monthly allowance:
+One manual step is unavoidable: the OAuth token from `wrangler login` has no
+Realtime scope, so a TURN key cannot be created with credentials the CLI
+already holds.
+
+1. [Create an API token](https://dash.cloudflare.com/profile/api-tokens) →
+   **Custom token** → permission **Account · Cloudflare Realtime · Edit**
+2. Run:
 
 ```bash
-npx wrangler secret put TURN_KEY_ID
-npx wrangler secret put TURN_KEY_API_TOKEN
+CLOUDFLARE_API_TOKEN=xxx npm run setup:turn
+npm run deploy
+```
+
+That creates the key, stores `TURN_KEY_ID` and `TURN_KEY_API_TOKEN` as Worker
+secrets, and prints how to verify. Confirm with:
+
+```bash
+curl -s https://<your-worker>/api/ice | grep hasTurn
 ```
 
 The Worker mints short-lived per-user credentials on `/api/ice`; long-lived
 credentials are never sent to a browser. Any standard TURN server works too via
 `TURN_URLS` / `TURN_USERNAME` / `TURN_CREDENTIAL`.
+
+**Cost:** TURN egress is $0.05/GB after a free 1,000 GB per month. Only the
+minority of connections that cannot go direct use the relay at all, so ordinary
+usage stays inside the free allowance. STUN is free and unlimited.
 
 ---
 
@@ -287,7 +320,7 @@ encoders throttles and ends up *worse*.
 
 | Setting | Default | Notes |
 |---|---|---|
-| `MAX_PEERS_PER_ROOM` | `8` | Mesh limit. Raising it degrades calls before it fails them |
+| `MAX_PEERS_PER_ROOM` | `12` | Mesh limit. Raising it degrades calls before it fails them |
 | `ROOM_IDLE_TIMEOUT_MS` | `120000` | How long a stale lobby entry survives |
 
 Room lifetime (`ROOM_TTL_MS`) and the removal cool-off (`KICK_BLOCK_MS`) are in
@@ -297,9 +330,13 @@ Room lifetime (`ROOM_TTL_MS`) and the removal cool-off (`KICK_BLOCK_MS`) are in
 
 ## Known limits
 
-- **~6 people** before mesh uplink becomes the bottleneck.
+- **12 people.** Video subscription keeps upload flat, but audio still goes to
+  everyone and each peer still runs several encoders. Past this you need an SFU.
+- **At most 4 remote cameras visible at once**, chosen by pin, screen share,
+  then recent speech. Everyone else shows as an avatar — this is the trade that
+  buys the higher headcount.
 - **No TURN by default** — a minority of networks will fail to connect until you
-  configure one.
+  run `npm run setup:turn`. Failures are now reported rather than silent.
 - **Chat is not persisted.** That is deliberate: the server stores no messages,
   so someone joining late sees no history.
 - **Host is the first joiner**, passing to the longest-present participant when

@@ -13,35 +13,54 @@ const PING_MS = 25_000;
 const MAX_BACKOFF_MS = 15_000;
 
 export class Signal extends EventTarget {
-  #url;
+  #urlFor;
   #ws = null;
   #attempt = 0;
   #pingTimer = null;
   #reconnectTimer = null;
   #closed = false;
+  #connecting = false;
   /** Frames written while the socket was down, replayed on reconnect. */
   #queue = [];
 
-  constructor(url) {
+  /**
+   * @param urlFor  () => Promise<string> -- resolved fresh for every attempt.
+   *
+   * A factory rather than a fixed string because the join grant in the URL is
+   * short-lived. Reconnecting to the original URL works for the first couple
+   * of minutes and then fails forever, which is precisely the window in which
+   * a phone gets pocketed or hands off between networks.
+   */
+  constructor(urlFor) {
     super();
-    this.#url = url;
+    this.#urlFor = typeof urlFor === "function" ? urlFor : async () => urlFor;
   }
 
   get connected() {
     return this.#ws?.readyState === WebSocket.OPEN;
   }
 
-  connect() {
-    if (this.#closed) return;
+  async connect() {
+    if (this.#closed || this.#connecting || this.connected) return;
+    this.#connecting = true;
     this.#clearReconnect();
 
     let ws;
     try {
-      ws = new WebSocket(this.#url);
-    } catch {
+      ws = new WebSocket(await this.#urlFor());
+    } catch (err) {
+      // Includes a refused re-issue (room ended, removed, full). Those are
+      // terminal, so surface them rather than retrying into a wall.
+      this.#connecting = false;
+      if (err?.terminal) {
+        this.#emit("close", { code: err.code ?? 4000, reason: err.message });
+        return;
+      }
       this.#scheduleReconnect();
       return;
     }
+
+    this.#connecting = false;
     this.#ws = ws;
 
     ws.addEventListener("open", () => {
@@ -135,6 +154,7 @@ export class Signal extends EventTarget {
   }
 
   #scheduleReconnect() {
+    if (this.#closed) return;
     this.#attempt += 1;
     // Exponential backoff with jitter, so a colo blip does not produce a
     // synchronised stampede from every client in the room.
