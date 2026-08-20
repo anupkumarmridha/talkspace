@@ -145,6 +145,79 @@ try {
   await ada.page.close();
   await grace.page.close();
 
+  // --- Camera survives an app switch ---------------------------------------
+
+  console.log("\n== camera recovers after the OS revokes it ==");
+  code = await newRoom("App switch");
+  const one = await joinAs(code, "Ada");
+  const two = await joinAs(code, "Grace");
+
+  await waitFor(one, () => document.querySelectorAll(".tile").length === 2);
+  await waitFor(
+    two,
+    () => window.__pcs.length === 1 && window.__pcs[0].connectionState === "connected",
+    30000,
+  );
+  await new Promise((r) => setTimeout(r, 4000));
+
+  const videoBytes = (ctx) =>
+    ctx.page.evaluate(async () => {
+      let bytes = 0;
+      for (const pc of window.__pcs) {
+        (await pc.getStats()).forEach((s) => {
+          if (s.type === "inbound-rtp" && s.kind === "video") bytes += s.bytesReceived ?? 0;
+        });
+      }
+      return bytes;
+    });
+
+  const startBytes = await videoBytes(two);
+  check("the far side is receiving video to begin with", startBytes > 10000, `${startBytes} bytes`);
+
+  // Reproduce an OS revocation. Calling stop() alone is not enough: by spec
+  // it does NOT fire "ended", because that event is reserved for a track
+  // ending for reasons outside the page's control -- which is exactly the
+  // case being simulated. So end the track and fire the event the browser
+  // would have fired.
+  await one.page.evaluate(() => {
+    for (const t of document.querySelector(".tile--self video").srcObject.getVideoTracks()) {
+      t.stop();
+      t.dispatchEvent(new Event("ended"));
+    }
+  });
+
+  // Returning to the app. Recovery deliberately waits for this: a camera
+  // cannot be re-acquired while the page is in the background, so the attempt
+  // belongs on the way back, not at the moment of loss.
+  await one.page.bringToFront();
+
+  const revived = await waitFor(
+    one,
+    () => {
+      const s = document.querySelector(".tile--self video")?.srcObject;
+      return Boolean(s) && s.getVideoTracks().some((t) => t.readyState === "live");
+    },
+    20000,
+  );
+  check("the camera is re-acquired locally", revived);
+
+  const camOn = await one.page.$eval("#cam-btn", (n) => n.dataset.on);
+  check("the camera button still reads on", camOn === "true", camOn);
+
+  // The real proof: frames reach the far side again, which only happens if
+  // the fresh track was pushed back into the peer connection.
+  const resumeStart = await videoBytes(two);
+  await new Promise((r) => setTimeout(r, 4000));
+  const resumeEnd = await videoBytes(two);
+  check(
+    "the far side receives video again",
+    resumeEnd - resumeStart > 10000,
+    `+${resumeEnd - resumeStart} bytes`,
+  );
+
+  await one.page.close();
+  await two.page.close();
+
   // --- Video subscription -------------------------------------------------
 
   console.log("\n== upload does not scale with the room ==");

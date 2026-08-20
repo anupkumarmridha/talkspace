@@ -10,6 +10,7 @@ media path.
 - **Host controls** — mute, unmute, remove, end the meeting
 - **Rooms live 24 hours**, so a link shared in the morning still works tonight
 - **Mobile-first PWA** — installs to a home screen and runs without browser chrome
+- **Survives app and tab switching** — camera is re-acquired, audio keeps playing
 
 ---
 
@@ -148,6 +149,34 @@ Reach them by tapping someone's tile, or from the participants list.
 > again instantly — a microphone never goes live silently. If you would prefer
 > the standard consent-based behaviour, change the `unmute` branch in
 > `src/signal-room.ts` to send an advisory frame instead.
+
+---
+
+## Backgrounding on mobile
+
+Switching to another app or tab is the normal case on a phone, and three
+separate things break if it is not handled:
+
+**The OS revokes the camera.** When another app claims it the track ends
+permanently — returning to the tab does not revive it, and because a dead track
+keeps its slot in the peer connection the symptom is a frozen tile with no
+error anywhere. Local tracks are watched for `ended`/`mute`, intent is recorded
+separately from what is live, and capture is re-acquired and pushed back into
+every peer connection on return. Mute state survives the round trip.
+
+**The page enters the back/forward cache.** `pagehide` fires with
+`persisted: true`, which is indistinguishable from leaving unless you check —
+announcing a departure there drops you out of a call merely for looking
+something up.
+
+**The AudioContext suspends.** The boost chain routes remote audio through
+WebAudio, and a suspended context is silent. Playback is handed back to the
+plain media element while hidden, which keeps playing in the background, and
+the processing is restored on return.
+
+Recovery deliberately waits until the page is visible again: a camera cannot be
+acquired while backgrounded, so attempting it at the moment of loss would only
+fail.
 
 ---
 

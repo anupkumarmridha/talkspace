@@ -42,6 +42,17 @@ const state = {
   /** peerId -> { info, key, seqOut, tiles, audio, detector, fingerprint } */
   peers: new Map(),
   local: { mic: null, camera: null, screen: null },
+  /**
+   * What the user *asked* for, kept separately from what is currently live.
+   *
+   * A mobile OS revokes camera and microphone whenever another app claims
+   * them, which ends the track for good. Without a record of intent there is
+   * nothing to restore on the way back -- the app would just conclude the
+   * camera is off.
+   */
+  want: { cam: false, mic: true },
+  /** Mute state, preserved across a track being killed and re-acquired. */
+  micEnabled: true,
   facing: "user",
   unread: 0,
   pinned: null,
@@ -223,19 +234,25 @@ async function join() {
 }
 
 async function startLocalMedia() {
+  // Record intent before touching hardware: if the OS takes a device away
+  // later, this is what tells us to get it back.
+  state.want = { mic: wantMic, cam: wantCam };
+  state.micEnabled = wantMic;
+
   if (wantMic) {
     try {
       const stream = await getMic();
-      state.local.mic = stream.getAudioTracks()[0];
+      state.local.mic = watchLocalTrack("mic", stream.getAudioTracks()[0]);
     } catch {
       wantMic = false;
+      state.want.mic = false;
       toast("Microphone unavailable — you can still listen", "error");
     }
   }
 
   // Reuse the preview stream so the camera does not visibly restart.
   if (wantCam && preview.srcObject) {
-    state.local.camera = preview.srcObject.getVideoTracks()[0];
+    state.local.camera = watchLocalTrack("camera", preview.srcObject.getVideoTracks()[0]);
     preview.srcObject = null; // ownership moves to the call
   }
 
@@ -244,6 +261,140 @@ async function startLocalMedia() {
 
   if (await hasMultipleCameras()) $("#flip-btn").hidden = false;
 }
+
+// ============================================================================
+// Surviving an app switch
+// ============================================================================
+
+/**
+ * Recover capture after the operating system takes it away.
+ *
+ * Switching to the camera app, taking a phone call, or simply backgrounding
+ * the browser causes the OS to revoke the camera and often the microphone.
+ * The MediaStreamTrack ends permanently -- coming back to the tab does not
+ * revive it, and because a dead track keeps its place in the peer connection
+ * the symptom is a frozen or black tile with no error anywhere.
+ *
+ * The fix has three parts: notice the track died, remember it was wanted, and
+ * re-acquire it plus re-attach it to every peer connection on return.
+ */
+function watchLocalTrack(kind, track) {
+  if (!track) return track;
+
+  // "ended" is terminal. "mute" is the OS temporarily taking the device and
+  // is often, but not always, followed by "unmute" -- so treat a mute that
+  // outlives the app switch as a death too.
+  track.addEventListener("ended", () => scheduleRecovery(kind));
+  track.addEventListener("mute", () => scheduleRecovery(kind));
+
+  return track;
+}
+
+/** A dead track is only worth replacing once we are back on screen. */
+function scheduleRecovery(kind) {
+  if (document.visibilityState !== "visible") return;
+  // Give the OS a moment to hand the device back before asking for it.
+  setTimeout(() => void recoverLocalMedia(kind), 400);
+}
+
+const isDead = (track) => !track || track.readyState === "ended" || track.muted;
+
+let recovering = false;
+
+async function recoverLocalMedia(only) {
+  if (!state.joined || recovering) return;
+  recovering = true;
+
+  try {
+    if ((!only || only === "mic") && state.want.mic && isDead(state.local.mic)) {
+      try {
+        const stream = await getMic();
+        state.local.mic?.stop();
+        state.local.mic = watchLocalTrack("mic", stream.getAudioTracks()[0]);
+        // Restore the mute state, not the device default.
+        state.local.mic.enabled = state.micEnabled;
+        await state.mesh?.setLocalTrack("mic", state.local.mic);
+        await restartSelfDetector();
+      } catch {
+        toast("Microphone unavailable — check it is not in use by another app", "error", 6000);
+      }
+    }
+
+    if ((!only || only === "camera") && state.want.cam && isDead(state.local.camera)) {
+      try {
+        const stream = await getCamera(state.facing);
+        state.local.camera?.stop();
+        state.local.camera = watchLocalTrack("camera", stream.getVideoTracks()[0]);
+        await state.mesh?.setLocalTrack("camera", state.local.camera);
+
+        const tile = tiles.get("self");
+        if (tile) tile.video.srcObject = stream;
+      } catch {
+        // Denied or still held by another app: reflect reality in the UI
+        // rather than showing a camera that is not running.
+        state.want.cam = false;
+        state.local.camera = null;
+        toast("Camera unavailable — reopen it when you are ready", "error", 6000);
+      }
+    }
+  } finally {
+    recovering = false;
+    paintToggle($("#cam-btn"), Boolean(state.local.camera), "i-cam", "i-cam-off");
+    updateSelfChrome();
+    broadcastState();
+  }
+}
+
+/** The detector holds a reference to the old track, so rebuild it. */
+async function restartSelfDetector() {
+  state.selfDetector?.destroy();
+  state.selfDetector = null;
+  await startSelfDetector();
+}
+
+/**
+ * Returning to the tab needs more than re-acquiring tracks: iOS pauses every
+ * media element while backgrounded and suspends the AudioContext, and neither
+ * resumes on its own.
+ */
+async function onResume() {
+  if (!state.joined || document.visibilityState !== "visible") return;
+
+  await resumeAudio();
+
+  for (const video of document.querySelectorAll("video")) {
+    if (video.paused && video.srcObject) video.play().catch(() => {});
+  }
+  for (const record of state.peers.values()) {
+    await record.audio?.play();
+    // Restore whatever output mode was chosen before we backgrounded.
+    record.audio?.setMode(state.outputMode);
+  }
+
+  await recoverLocalMedia();
+}
+
+/**
+ * Going into the background must not silence the call.
+ *
+ * The boost chain routes remote audio through WebAudio, and a mobile OS
+ * suspends the AudioContext as soon as the tab is hidden -- which would cut
+ * the audio entirely the moment someone opens another tab to look something
+ * up. A plain media element keeps playing in the background, so hand playback
+ * back to it while hidden and restore the processing on return.
+ */
+function onHide() {
+  if (!state.joined) return;
+  for (const record of state.peers.values()) record.audio?.setMode("call");
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") void onResume();
+  else onHide();
+});
+window.addEventListener("pageshow", () => void onResume());
+// Fired when a frozen tab is restored on Android Chrome.
+document.addEventListener("resume", () => void onResume());
 
 function openSignal(firstToken) {
   const scheme = location.protocol === "https:" ? "wss" : "ws";
@@ -1085,6 +1236,9 @@ function setMicEnabled(on) {
   if (!state.local.mic) return false;
 
   state.local.mic.enabled = on;
+  // Remembered so a track killed by an app switch comes back muted if that is
+  // how it was left.
+  state.micEnabled = on;
   paintToggle($("#mic-btn"), on, "i-mic", "i-mic-off");
   $("#mic-btn").setAttribute("aria-label", on ? "Mute microphone" : "Unmute microphone");
   updateSelfChrome();
@@ -1100,6 +1254,7 @@ $("#mic-btn").addEventListener("click", () => {
 
 $("#cam-btn").addEventListener("click", async () => {
   if (state.local.camera) {
+    state.want.cam = false;
     state.local.camera.stop();
     state.local.camera = null;
     // replaceTrack(null) frees the uplink outright, which matters in a mesh.
@@ -1108,7 +1263,8 @@ $("#cam-btn").addEventListener("click", async () => {
   } else {
     try {
       const stream = await getCamera(state.facing);
-      state.local.camera = stream.getVideoTracks()[0];
+      state.want.cam = true;
+      state.local.camera = watchLocalTrack("camera", stream.getVideoTracks()[0]);
       await state.mesh.setLocalTrack("camera", state.local.camera);
       tiles.get("self").video.srcObject = stream;
     } catch {
@@ -1129,7 +1285,7 @@ $("#flip-btn").addEventListener("click", async () => {
   try {
     const stream = await getCamera(state.facing);
     state.local.camera.stop();
-    state.local.camera = stream.getVideoTracks()[0];
+    state.local.camera = watchLocalTrack("camera", stream.getVideoTracks()[0]);
     await state.mesh.setLocalTrack("camera", state.local.camera);
 
     const tile = tiles.get("self");
@@ -1373,7 +1529,13 @@ function leave(reason) {
 
 // Best-effort notice so others see you leave immediately rather than waiting
 // for the socket to time out.
-window.addEventListener("pagehide", () => {
+//
+// `persisted` means the page is going into the back/forward cache rather than
+// being torn down -- which is what mobile does when you switch tabs or apps.
+// Announcing a departure there would drop you out of the call merely for
+// looking something up, and you are expected back within seconds.
+window.addEventListener("pagehide", (event) => {
+  if (event.persisted) return;
   if (state.joined) state.signal?.send({ t: "bye" });
 });
 
