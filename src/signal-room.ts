@@ -1,6 +1,9 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "./index";
 import {
+  ALONE_CLOSE_MS,
+  ALONE_WARN_MS,
+  CLOSE_ABANDONED,
   CLOSE_BAD_REQUEST,
   CLOSE_ENDED,
   CLOSE_FLOOD,
@@ -359,16 +362,75 @@ export class SignalRoom extends DurableObject<Env> {
       return;
     }
 
-    // An unlisted room never appears in the directory, so it needs no
-    // heartbeat at all -- only the one wake-up at expiry. A private two-person
-    // call therefore costs essentially nothing per hour, however long it runs.
-    if (!meta.isPublic) {
-      await this.ctx.storage.setAlarm(meta.expiresAt);
-      return;
+    // Track how long someone has been on their own, so an abandoned tab can
+    // be reaped. The clock starts when the room drops to one and is cleared
+    // the moment anyone else arrives.
+    if (peers.length === 1) {
+      if (!this.get("alone_since")) this.put("alone_since", String(Date.now()));
+    } else {
+      this.ctx.storage.sql.exec(`DELETE FROM meta WHERE k IN ('alone_since','alone_warned')`);
     }
 
-    await lobby.upsert(meta, peers.length, peers.map((p) => p.name));
-    await this.ctx.storage.setAlarm(Math.min(Date.now() + HEARTBEAT_MS, meta.expiresAt));
+    // An unlisted room never appears in the directory, so it needs no
+    // heartbeat -- but it still needs a wake-up for the alone deadline.
+    const wakeAt = [meta.expiresAt, this.aloneDeadline()];
+    if (meta.isPublic) {
+      await lobby.upsert(meta, peers.length, peers.map((p) => p.name));
+      wakeAt.push(Date.now() + HEARTBEAT_MS);
+    }
+
+    await this.ctx.storage.setAlarm(Math.min(...wakeAt.filter((t) => t > 0)));
+  }
+
+  /** Overridable so tests can exercise this in seconds, not minutes. */
+  private warnAfter(): number {
+    return Number(this.env.ALONE_WARN_MS ?? ALONE_WARN_MS);
+  }
+
+  private closeAfter(): number {
+    return Number(this.env.ALONE_CLOSE_MS ?? ALONE_CLOSE_MS);
+  }
+
+  /** When the next alone-related wake-up is due, or 0 if nobody is alone. */
+  private aloneDeadline(): number {
+    const since = Number(this.get("alone_since") ?? 0);
+    if (!since) return 0;
+    return since + (this.get("alone_warned") ? this.closeAfter() : this.warnAfter());
+  }
+
+  /**
+   * Warn a lone participant, then disconnect them.
+   * Returns true if the room was closed and no further work applies.
+   */
+  private async reapIfAbandoned(): Promise<boolean> {
+    const since = Number(this.get("alone_since") ?? 0);
+    if (!since) return false;
+
+    const sockets = this.ctx.getWebSockets();
+    if (sockets.length !== 1) return false;
+
+    const alone = Date.now() - since;
+
+    if (alone >= this.closeAfter()) {
+      send(sockets[0], {
+        t: "error",
+        code: "abandoned",
+        message: "You were the only one here, so the call ended",
+      });
+      try {
+        sockets[0].close(CLOSE_ABANDONED, "abandoned");
+      } catch {
+        /* already gone */
+      }
+      return true;
+    }
+
+    if (alone >= this.warnAfter() && !this.get("alone_warned")) {
+      this.put("alone_warned", "1");
+      send(sockets[0], { t: "alone-warning", closesInMs: this.closeAfter() - alone });
+    }
+
+    return false;
   }
 
   override async alarm(): Promise<void> {
@@ -387,6 +449,8 @@ export class SignalRoom extends DurableObject<Env> {
       await this.ctx.storage.deleteAll();
       return;
     }
+
+    if (await this.reapIfAbandoned()) return;
 
     await this.publishPresence();
   }

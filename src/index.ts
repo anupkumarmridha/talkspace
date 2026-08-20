@@ -23,6 +23,9 @@ export interface Env {
   TURN_CREDENTIAL?: string;
   /** Set to "1" to opt out of the free community relay fallback. */
   DISABLE_FALLBACK_TURN?: string;
+  /** Override the abandoned-session thresholds (ms). Used by tests. */
+  ALONE_WARN_MS?: string;
+  ALONE_CLOSE_MS?: string;
 }
 
 /**

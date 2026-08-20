@@ -96,6 +96,8 @@ export type ServerFrame =
   | { t: "force-mute"; by: string }
   /** The host unmuted you. Applied immediately, and always surfaced loudly. */
   | { t: "force-unmute"; by: string }
+  /** You are alone and the session will be closed unless someone joins. */
+  | { t: "alone-warning"; closesInMs: number }
   | { t: "error"; code: string; message: string };
 
 /** Frames the lobby Durable Object sends to the browser. */
@@ -124,6 +126,16 @@ export const CLOSE_ENDED = 4006;
 
 /** Rooms outlive their participants by a day. */
 export const ROOM_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * A participant left on their own is usually a call someone walked away from
+ * without closing the tab. Warn, then disconnect, so an abandoned session does
+ * not hold a microphone open and tick over Durable Object requests all day.
+ * The room itself survives -- the code still works for the full 24 hours.
+ */
+export const ALONE_WARN_MS = 5 * 60 * 1000;
+export const ALONE_CLOSE_MS = 6 * 60 * 1000;
+export const CLOSE_ABANDONED = 4007;
 
 /** How long a removed participant is kept out before they may knock again. */
 export const KICK_BLOCK_MS = 2 * 60 * 1000;

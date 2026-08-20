@@ -299,9 +299,36 @@ function scheduleRecovery(kind) {
 
 const isDead = (track) => !track || track.readyState === "ended" || track.muted;
 
+/**
+ * Is this element actually receiving new frames?
+ *
+ * A track can survive an app switch reporting readyState "live" and muted
+ * false while producing nothing at all -- the camera is frozen rather than
+ * released. Track state cannot distinguish that, so ask for a frame and see
+ * whether one arrives.
+ */
+function framesFlowing(video, ms = 1500) {
+  return new Promise((resolve) => {
+    if (!video?.srcObject || typeof video.requestVideoFrameCallback !== "function") {
+      resolve(true); // cannot tell; assume fine rather than churn the camera
+      return;
+    }
+    let settled = false;
+    const handle = video.requestVideoFrameCallback(() => {
+      settled = true;
+      resolve(true);
+    });
+    setTimeout(() => {
+      if (settled) return;
+      video.cancelVideoFrameCallback?.(handle);
+      resolve(false);
+    }, ms);
+  });
+}
+
 let recovering = false;
 
-async function recoverLocalMedia(only) {
+async function recoverLocalMedia(only, force = false) {
   if (!state.joined || recovering) return;
   recovering = true;
 
@@ -320,7 +347,7 @@ async function recoverLocalMedia(only) {
       }
     }
 
-    if ((!only || only === "camera") && state.want.cam && isDead(state.local.camera)) {
+    if ((!only || only === "camera") && state.want.cam && (force || isDead(state.local.camera))) {
       try {
         const stream = await getCamera(state.facing);
         state.local.camera?.stop();
@@ -372,6 +399,28 @@ async function onResume() {
   }
 
   await recoverLocalMedia();
+
+  // A camera can come back from an app switch "live" but frozen, which no
+  // track property reveals. If no frame arrives, restart it outright.
+  if (state.want.cam && state.local.camera) {
+    const selfVideo = tiles.get("self")?.video;
+    if (!(await framesFlowing(selfVideo))) {
+      await recoverLocalMedia("camera", true);
+    }
+  }
+
+  // Remote tiles can be frozen too: the decoder was paused while hidden and
+  // does not always restart on its own. Re-attaching the stream does restart
+  // it, and is invisible when the video is already running.
+  for (const [id, tile] of tiles) {
+    if (id === "self" || !tile.video.srcObject) continue;
+    if (await framesFlowing(tile.video, 1200)) continue;
+
+    const stream = tile.video.srcObject;
+    tile.video.srcObject = null;
+    tile.video.srcObject = stream;
+    tile.video.play().catch(() => {});
+  }
 }
 
 /**
@@ -457,18 +506,49 @@ function openSignal(firstToken) {
     haptic(20);
   });
 
-  signal.addEventListener("force-unmute", (e) => {
-    if (!state.local.mic) {
-      toast(`${e.detail.by} asked you to unmute — no microphone available`, "error", 6000);
-      return;
+  signal.addEventListener("force-unmute", async (e) => {
+    // Enforced, so acquire a microphone if there is not one -- the participant
+    // may have joined muted and never opened it. Only a hard permission
+    // refusal can stop this.
+    if (isDead(state.local.mic)) {
+      try {
+        const stream = await getMic();
+        state.local.mic?.stop();
+        state.local.mic = watchLocalTrack("mic", stream.getAudioTracks()[0]);
+        state.want.mic = true;
+        await state.mesh?.setLocalTrack("mic", state.local.mic);
+        await restartSelfDetector();
+      } catch {
+        toast(`${e.detail.by} unmuted you, but no microphone is available`, "error", 6000);
+        return;
+      }
     }
+
     setMicEnabled(true);
     toast(`${e.detail.by} unmuted you — your mic is live`, "error", 6000);
     haptic([30, 60, 30]);
   });
 
+  signal.addEventListener("alone-warning", (e) => {
+    const minutes = Math.max(1, Math.round(e.detail.closesInMs / 60000));
+    toast(
+      `You are the only one here. The call will end in about ${minutes} minute${minutes === 1 ? "" : "s"}.`,
+      "error",
+      15000,
+    );
+    haptic([20, 80, 20]);
+
+    // Reuse the solo panel to carry the same message, since a toast is easy
+    // to miss on a phone that has been sitting idle.
+    state.waitingDismissed = false;
+    $("#waiting-title").textContent = "Still on your own";
+    $("#waiting-sub").textContent = "The call will end shortly unless someone joins.";
+    refreshAll();
+  });
+
   signal.addEventListener("error", (e) => {
     const { code, message } = e.detail;
+    if (code === "abandoned") return leave("Call ended — you were the only one here");
 
     // Act on the application frame, not the close code. A WebSocket close
     // handshake is best-effort -- it can stall behind a proxy or when the
@@ -488,6 +568,7 @@ function openSignal(firstToken) {
     if (code === 4002) return leave("Your invite expired");
     if (code === 4005) return leave("The host removed you from the call");
     if (code === 4006) return leave("The meeting has ended");
+    if (code === 4007) return leave("Call ended — you were the only one here");
     if (code >= 4000 && code < 5000) return leave("Disconnected");
     setConnStatus("offline");
   });
@@ -1107,6 +1188,10 @@ function refreshAll() {
   // Being alone is a normal state, not an error: the room stays open and the
   // code keeps working, so whoever left can come straight back.
   const alone = state.peers.size === 0;
+  if (!alone) {
+    $("#waiting-title").textContent = "You are the only one here";
+    $("#waiting-sub").textContent = "Share the link to bring someone in.";
+  }
   $("#waiting").hidden = !alone || state.waitingDismissed;
   if (alone) $("#waiting-code").textContent = roomId;
   // Dismissing is per-spell-of-being-alone: if everyone leaves again later,
@@ -1246,8 +1331,28 @@ function setMicEnabled(on) {
   return true;
 }
 
-$("#mic-btn").addEventListener("click", () => {
-  if (!state.local.mic) return void toast("No microphone available", "error");
+$("#mic-btn").addEventListener("click", async () => {
+  // There may be no live track at all: you can join with the microphone
+  // switched off, and the OS can take it away mid-call. Either way the
+  // button has to be able to acquire one, not just flip a flag on a track
+  // that does not exist.
+  if (isDead(state.local.mic)) {
+    try {
+      const stream = await getMic();
+      state.local.mic?.stop();
+      state.local.mic = watchLocalTrack("mic", stream.getAudioTracks()[0]);
+      state.want.mic = true;
+
+      await state.mesh?.setLocalTrack("mic", state.local.mic);
+      await restartSelfDetector();
+      setMicEnabled(true);
+      haptic();
+    } catch {
+      toast("Microphone unavailable — check the browser's permissions", "error", 6000);
+    }
+    return;
+  }
+
   setMicEnabled(!state.local.mic.enabled);
   haptic();
 });
@@ -1476,7 +1581,7 @@ $("#mute-all-btn").addEventListener("click", () => {
   for (const peerId of state.peers.keys()) {
     state.signal.send({ t: "host", action: "mute", target: peerId });
   }
-  toast(`Asked ${state.peers.size} ${state.peers.size === 1 ? "person" : "people"} to mute`);
+  toast(`Muted ${state.peers.size} ${state.peers.size === 1 ? "person" : "people"}`);
   haptic(20);
 });
 

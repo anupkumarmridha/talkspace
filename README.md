@@ -137,6 +137,7 @@ enforces it.
 | **Mute** | Enforced. The participant's client mutes on receipt, no prompt. |
 | **Unmute** | Enforced. Applied immediately, and always announced to them. |
 | **Remove** | Disconnects them and blocks rejoining for two minutes. |
+| **Mute everyone** | One tap, from Options. |
 | **End meeting** | Disconnects everyone and retires the room code permanently. |
 
 Reach them by tapping someone's tile, or from the participants list.
@@ -174,9 +175,20 @@ WebAudio, and a suspended context is silent. Playback is handed back to the
 plain media element while hidden, which keeps playing in the background, and
 the processing is restored on return.
 
+A camera can also come back from an app switch reporting `live` and unmuted
+while producing no frames at all — frozen rather than released. No track
+property distinguishes that, so on return the app asks for a frame via
+`requestVideoFrameCallback` and restarts capture if none arrives. Remote tiles
+get the same treatment, since a paused decoder does not always restart itself.
+
 Recovery deliberately waits until the page is visible again: a camera cannot be
 acquired while backgrounded, so attempting it at the moment of loss would only
 fail.
+
+**Abandoned sessions** are reaped. Someone left alone is warned after 5 minutes
+and disconnected a minute later, so a forgotten tab does not hold a microphone
+open and tick over Durable Object requests all day. The room itself survives —
+the code keeps working for its full 24 hours.
 
 ---
 
@@ -209,7 +221,7 @@ To test a real call you need two participants. Any of these work:
 Start the dev server in one terminal, then in another:
 
 ```bash
-npm test              # everything: typecheck + 8 suites
+npm test              # everything: typecheck + 9 suites
 ```
 
 Or individually:
@@ -225,6 +237,7 @@ Or individually:
 | `npm run test:mesh` | Three peers: every pair connected, ladder, cleanup |
 | `npm run test:resilience` | Reconnect after a dropped socket; video subscription caps |
 | `npm run test:turn` | Four-person call end to end; relay-only connection |
+| `npm run test:abandoned` | Lone participant warned then disconnected (own Worker) |
 
 The browser suites drive real Chrome with fake capture devices, and assert on
 `RTCPeerConnection` state and RTP counters rather than on the DOM alone. They
