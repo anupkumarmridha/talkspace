@@ -261,17 +261,23 @@ function openSignal(token) {
     renderPeople();
   });
 
-  // The host cannot reach into this device and switch the microphone off --
-  // no browser permits that. What arrives is a request, and we honour it.
+  // Host mute and unmute are both enforced: applied on receipt, no prompt.
+  // They are always announced, so the microphone never changes state without
+  // the person being told, and they can override it immediately.
   signal.addEventListener("force-mute", (e) => {
-    if (state.local.mic?.enabled) {
-      state.local.mic.enabled = false;
-      paintToggle($("#mic-btn"), false, "i-mic", "i-mic-off");
-      updateSelfChrome();
-      broadcastState();
-    }
+    setMicEnabled(false);
     toast(`${e.detail.by} muted you`);
     haptic(20);
+  });
+
+  signal.addEventListener("force-unmute", (e) => {
+    if (!state.local.mic) {
+      toast(`${e.detail.by} asked you to unmute — no microphone available`, "error", 6000);
+      return;
+    }
+    setMicEnabled(true);
+    toast(`${e.detail.by} unmuted you — your mic is live`, "error", 6000);
+    haptic([30, 60, 30]);
   });
 
   signal.addEventListener("error", (e) => {
@@ -657,12 +663,10 @@ function ensureTile(id, name, { self = false, screen = false } = {}) {
 
   root.append(video, avatar, label, spinner);
 
-  // Tap to pin. On a phone this is how you get one face full-screen.
-  root.addEventListener("click", () => {
-    state.pinned = state.pinned === id ? null : id;
-    haptic();
-    refreshAll();
-  });
+  // Tapping a tile opens its actions, rather than pinning outright. Pinning
+  // is one of several things you might want, and a tap that silently
+  // rearranges the whole grid is a surprising default.
+  root.addEventListener("click", () => openTileActions(id));
 
   grid.append(root);
   const record = { root, video, avatar, initials: initialsNode, label, name: nameNode, micIcon, spinner };
@@ -688,6 +692,87 @@ function svgIcon(name) {
   use.setAttribute("href", `#${name}`);
   svg.append(use);
   return svg;
+}
+
+/**
+ * Per-participant actions, opened by tapping their tile.
+ *
+ * The same actions live in the participants list; this is the direct route,
+ * because on a phone the person you want to act on is the one you are
+ * looking at.
+ */
+function openTileActions(tileId) {
+  // A screen-share tile stands in for its owner.
+  const peerId = tileId.replace(/:screen$/, "");
+  const isSelf = peerId === "self";
+  const record = isSelf ? null : state.peers.get(peerId);
+  const name = isSelf ? "You" : (record?.info.name ?? "Participant");
+
+  const body = $("#tile-sheet .sheet__body");
+  body.textContent = "";
+  $("#tile-sheet-title").textContent = name;
+
+  const pinned = state.pinned === tileId;
+  body.append(
+    el(
+      "button",
+      {
+        class: "btn btn--ghost btn--block",
+        type: "button",
+        onclick: () => {
+          state.pinned = pinned ? null : tileId;
+          haptic();
+          refreshAll();
+          sheets.tile.close();
+        },
+      },
+      pinned ? "Unpin" : "Pin to full screen",
+    ),
+  );
+
+  if (isHost() && !isSelf && record) {
+    const muted = record.info.state?.mic === false;
+
+    body.append(
+      el(
+        "button",
+        {
+          class: "btn btn--ghost btn--block",
+          type: "button",
+          onclick: () => {
+            state.signal.send({
+              t: "host",
+              action: muted ? "unmute" : "mute",
+              target: peerId,
+            });
+            toast(muted ? `Unmuted ${name}` : `Muted ${name}`);
+            haptic();
+            sheets.tile.close();
+          },
+        },
+        muted ? `Unmute ${name}` : `Mute ${name}`,
+      ),
+    );
+
+    body.append(
+      el(
+        "button",
+        {
+          class: "btn btn--danger btn--block",
+          type: "button",
+          onclick: () => {
+            if (!confirm(`Remove ${name} from the call?`)) return;
+            state.signal.send({ t: "host", action: "kick", target: peerId });
+            haptic(20);
+            sheets.tile.close();
+          },
+        },
+        `Remove ${name}`,
+      ),
+    );
+  }
+
+  openSheet("tile");
 }
 
 function refreshGridCount() {
@@ -825,20 +910,25 @@ function renderPeople() {
     if (isHost() && !row.isSelf) {
       const actions = el("div", { class: "person__actions" });
 
+      const muted = row.state?.mic === false;
       actions.append(
         el(
           "button",
           {
             class: "chip",
             type: "button",
-            "aria-label": `Mute ${row.name}`,
+            "aria-label": `${muted ? "Unmute" : "Mute"} ${row.name}`,
             onclick: () => {
-              state.signal.send({ t: "host", action: "mute", target: row.id });
-              toast(`Asked ${row.name} to mute`);
+              state.signal.send({
+                t: "host",
+                action: muted ? "unmute" : "mute",
+                target: row.id,
+              });
+              toast(muted ? `Unmuted ${row.name}` : `Muted ${row.name}`);
               haptic();
             },
           },
-          "Mute",
+          muted ? "Unmute" : "Mute",
         ),
       );
 
@@ -870,15 +960,22 @@ function renderPeople() {
 // Controls
 // ============================================================================
 
-$("#mic-btn").addEventListener("click", () => {
-  if (!state.local.mic) return void toast("No microphone available", "error");
+/** Single path for changing our own mic, whoever asked for it. */
+function setMicEnabled(on) {
+  if (!state.local.mic) return false;
 
-  state.local.mic.enabled = !state.local.mic.enabled;
-  paintToggle($("#mic-btn"), state.local.mic.enabled, "i-mic", "i-mic-off");
-  $("#mic-btn").setAttribute("aria-label", state.local.mic.enabled ? "Mute microphone" : "Unmute microphone");
-  haptic();
+  state.local.mic.enabled = on;
+  paintToggle($("#mic-btn"), on, "i-mic", "i-mic-off");
+  $("#mic-btn").setAttribute("aria-label", on ? "Mute microphone" : "Unmute microphone");
   updateSelfChrome();
   broadcastState();
+  return true;
+}
+
+$("#mic-btn").addEventListener("click", () => {
+  if (!state.local.mic) return void toast("No microphone available", "error");
+  setMicEnabled(!state.local.mic.enabled);
+  haptic();
 });
 
 $("#cam-btn").addEventListener("click", async () => {
@@ -1153,6 +1250,7 @@ const sheets = {
   people: new Sheet($("#people-sheet"), { scrim }),
   more: new Sheet($("#more-sheet"), { scrim }),
   invite: new Sheet($("#invite-sheet"), { scrim }),
+  tile: new Sheet($("#tile-sheet"), { scrim }),
   safety: new Sheet($("#safety-sheet"), { scrim }),
 };
 

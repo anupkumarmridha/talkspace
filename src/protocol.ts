@@ -56,11 +56,21 @@ export type HostAction =
   /** Disconnect a participant and block an immediate reconnect. */
   | { action: "kick"; target: string }
   /**
-   * Ask a participant's client to mute itself. It is a request, not a seizure:
-   * no browser can switch off another device's microphone, and Meet works the
-   * same way. The client always honours it.
+   * Mute a participant. Enforced, not negotiated: their client mutes on
+   * receipt with no prompt, exactly like Google Meet.
    */
   | { action: "mute"; target: string }
+  /**
+   * Unmute a participant.
+   *
+   * Enforced, like mute. This goes further than Meet, Zoom or Teams, which
+   * will only ever *ask* -- muting reduces what a microphone captures, while
+   * unmuting increases it, so they require consent. Enabled here at the
+   * operator's explicit direction. The recipient is always shown a prominent
+   * notice, so a microphone never goes live silently and they can mute again
+   * immediately.
+   */
+  | { action: "unmute"; target: string }
   /** End the meeting for everyone and retire the code. */
   | { action: "end" };
 
@@ -82,8 +92,10 @@ export type ServerFrame =
   | { t: "state"; id: string; state: PeerState }
   /** Host changed -- either the first join, or promotion after one leaves. */
   | { t: "host"; id: string }
-  /** The host asked you to mute. Your client mutes itself on receipt. */
+  /** The host muted you. Applied immediately, without a prompt. */
   | { t: "force-mute"; by: string }
+  /** The host unmuted you. Applied immediately, and always surfaced loudly. */
+  | { t: "force-unmute"; by: string }
   | { t: "error"; code: string; message: string };
 
 /** Frames the lobby Durable Object sends to the browser. */

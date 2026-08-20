@@ -276,9 +276,13 @@ export class SignalRoom extends DurableObject<Env> {
     const victim = target.deserializeAttachment() as Attachment | null;
 
     if (frame.action === "mute") {
-      // A mute the client performs on itself. Nothing here can reach into
-      // another device and switch off its microphone.
+      // Enforced: the recipient mutes on receipt, no prompt.
       send(target, { t: "force-mute", by: me.name });
+      return;
+    }
+
+    if (frame.action === "unmute") {
+      send(target, { t: "force-unmute", by: me.name });
       return;
     }
 

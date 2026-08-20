@@ -107,11 +107,22 @@ check("the host stayed connected", A.closeCode === null, `close=${A.closeCode} r
 
 // --- Mute -------------------------------------------------------------------
 
-console.log("\n== host mute is a request the client honours ==");
+console.log("\n== host mute and unmute are both enforced ==");
 A.send({ t: "host", action: "mute", target: wb.self.id });
 const muted = await Bp.wait((f) => f.t === "force-mute");
 check("target receives force-mute", muted.by === "Ada");
 check("it names who did it", typeof muted.by === "string" && muted.by.length > 0);
+
+A.send({ t: "host", action: "unmute", target: wb.self.id });
+const unmuted = await Bp.wait((f) => f.t === "force-unmute");
+check("target receives force-unmute", unmuted.by === "Ada");
+
+// Neither is available to a non-host.
+Bp.send({ t: "host", action: "unmute", target: wa.self.id });
+const deniedUnmute = await Bp.wait((f) => f.t === "error" && f.code === "not_host", 4000);
+check("a non-host unmute is refused", deniedUnmute.code === "not_host");
+await settle();
+check("the host was not unmuted by a guest", !A.frames.some((f) => f.t === "force-unmute"));
 
 // --- Kick -------------------------------------------------------------------
 

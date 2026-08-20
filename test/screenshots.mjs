@@ -72,6 +72,16 @@ await new Promise((r) => setTimeout(r, 400));
 await a.click("#invite-btn");
 await new Promise((r) => setTimeout(r, 900));
 await a.screenshot({ path: "shots/8-invite.png" });
+await a.keyboard.press("Escape");
+await new Promise((r) => setTimeout(r, 600));
+
+// Tapping the other person's tile opens their actions.
+await a.evaluate(() => {
+  const tiles = [...document.querySelectorAll(".tile")];
+  (tiles.find((t) => !t.classList.contains("tile--self")) ?? tiles[1]).click();
+});
+await new Promise((r) => setTimeout(r, 900));
+await a.screenshot({ path: "shots/9-tile-actions.png" });
 
 console.log("screenshots written");
 await browser.close();

@@ -7,7 +7,7 @@ media path.
 - **Audio + video + screen share** over WebRTC
 - **Encrypted chat** peer-to-peer, with an encrypted fallback
 - **Browsable lobby** of live public rooms, plus join-by-code
-- **Host controls** — mute, remove, end the meeting
+- **Host controls** — mute, unmute, remove, end the meeting
 - **Rooms live 24 hours**, so a link shared in the morning still works tonight
 - **Mobile-first PWA** — installs to a home screen and runs without browser chrome
 
@@ -95,6 +95,33 @@ metadata permanently. It would not improve confidentiality by one bit.
 **Not claimed:** if nobody compares the safety number, a malicious server could
 MITM the *fallback chat channel*. Display names and room membership are visible
 to the server. Metadata privacy is a different and much harder problem.
+
+---
+
+## Host controls
+
+The first person to join takes the chair; if they leave it passes to whoever
+has been present longest. Every action is authorised inside the Durable Object
+— the client hides buttons from non-hosts as a courtesy, but that is not what
+enforces it.
+
+| Action | Behaviour |
+|---|---|
+| **Mute** | Enforced. The participant's client mutes on receipt, no prompt. |
+| **Unmute** | Enforced. Applied immediately, and always announced to them. |
+| **Remove** | Disconnects them and blocks rejoining for two minutes. |
+| **End meeting** | Disconnects everyone and retires the room code permanently. |
+
+Reach them by tapping someone's tile, or from the participants list.
+
+> **A note on enforced unmute.** Meet, Zoom and Teams will all *ask* rather
+> than unmute you. Their reasoning is that muting only reduces what a
+> microphone captures while unmuting increases it, so it needs consent. This
+> build enforces it, by explicit request. The mitigation is that the
+> participant always gets a prominent notice the moment it happens and can mute
+> again instantly — a microphone never goes live silently. If you would prefer
+> the standard consent-based behaviour, change the `unmute` branch in
+> `src/signal-room.ts` to send an advisory frame instead.
 
 ---
 
@@ -276,7 +303,9 @@ Room lifetime (`ROOM_TTL_MS`) and the removal cool-off (`KICK_BLOCK_MS`) are in
 - **Chat is not persisted.** That is deliberate: the server stores no messages,
   so someone joining late sees no history.
 - **Host is the first joiner**, passing to the longest-present participant when
-  they leave. There are no accounts, so there is no stronger notion of ownership.
+  they leave. There are no accounts, so there is no stronger notion of
+  ownership — and the removal block is by display name, which is a speed bump
+  rather than access control.
 - **Safety numbers only help if someone checks them.**
 
 ## Licence
