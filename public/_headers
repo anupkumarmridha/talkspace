@@ -1,0 +1,25 @@
+# Static assets bypass the Worker entirely, so their security headers have to
+# be declared here rather than in src/index.ts.
+
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; connect-src 'self' wss: https:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  Permissions-Policy: camera=(self), microphone=(self), display-capture=(self)
+  Referrer-Policy: no-referrer
+  X-Content-Type-Options: nosniff
+  Cross-Origin-Opener-Policy: same-origin
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+
+# The service worker decides when the shell updates, so it must never be
+# served from an HTTP cache itself.
+/sw.js
+  Cache-Control: no-cache
+
+/manifest.webmanifest
+  Cache-Control: public, max-age=3600
+
+# Content-addressed by the VERSION constant in sw.js; safe to cache hard.
+/wasm/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/icon-*.png
+  Cache-Control: public, max-age=604800

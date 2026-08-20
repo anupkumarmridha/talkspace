@@ -1,0 +1,11 @@
+node_modules/
+.wrangler/
+.dev.vars
+dist/
+*.log
+.DS_Store
+.npm-cache/
+shots/
+
+# Rust build output (the built dsp.wasm is committed under public/wasm/)
+wasm/dsp/target/

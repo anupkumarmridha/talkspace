@@ -1,0 +1,1361 @@
+/* ==========================================================================
+   TalkSpace — mobile-first design system.
+
+   Every base rule targets a phone held in one hand. Larger screens are
+   progressive enhancement via min-width queries, never the other way round.
+   ========================================================================== */
+
+:root {
+  /* Palette — dark is the default because calls are often in low light. */
+  --bg: #0b0d10;
+  --bg-elev: #14171c;
+  --bg-elev-2: #1c2027;
+  --line: #262b33;
+  --text: #f2f4f7;
+  --text-dim: #99a1ad;
+  --text-faint: #667080;
+
+  --accent: #5b8cff;
+  --accent-ink: #ffffff;
+  --danger: #ff4d5e;
+  --success: #2fd07f;
+  --warn: #ffb020;
+
+  /* Type — the system stack is what makes a web app read as native. */
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+    system-ui, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 20px;
+  --r-full: 999px;
+
+  /* Touch target floor. Never ship a tap target smaller than this. */
+  --tap: 48px;
+
+  /* Physical safe areas, resolved once so layout can just reference them. */
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-l: env(safe-area-inset-left, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
+
+  --ease: cubic-bezier(0.32, 0.72, 0, 1); /* iOS-like sheet easing */
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f6f7f9;
+    --bg-elev: #ffffff;
+    --bg-elev-2: #eef0f4;
+    --line: #dfe3ea;
+    --text: #10141a;
+    --text-dim: #5c6675;
+    --text-faint: #8a94a3;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+/*
+ * The UA rule for this is `[hidden] { display: none }` -- an attribute
+ * selector, which any class selector that sets `display` will outrank. So
+ * `.prejoin { display: flex }` silently defeats `<section hidden>`, leaving a
+ * full-screen overlay sitting invisible-but-hit-testable over the whole app.
+ * Restate it with enough weight to win.
+ */
+[hidden] {
+  display: none !important;
+}
+
+html {
+  /* Stop iOS from re-flowing text when the device rotates. */
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  /* dvh tracks the collapsing mobile URL bar; vh does not. */
+  min-height: 100dvh;
+  -webkit-font-smoothing: antialiased;
+  /* No grey flash on tap, and no accidental text selection on controls. */
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation; /* removes the 300ms double-tap-zoom delay */
+  cursor: pointer;
+  border: 0;
+  background: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/*
+ * Utility classes.
+ *
+ * These exist because the Content-Security-Policy is `style-src 'self'` with
+ * no 'unsafe-inline': a `style="..."` attribute in markup is refused outright
+ * by the browser, so the rule simply does not apply. Keeping these here means
+ * the strict policy costs nothing.
+ */
+.sprite {
+  position: absolute;
+  width: 0;
+  height: 0;
+}
+
+.u-grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.u-push {
+  margin-left: auto;
+}
+
+.u-center {
+  text-align: center;
+}
+
+.u-relative {
+  position: relative;
+}
+
+.u-row-center {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+}
+
+.u-auto {
+  flex: 0 0 auto;
+  width: auto;
+}
+
+.u-mono-xs {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.icon--xs {
+  width: 12px;
+  height: 12px;
+}
+
+.icon--sm {
+  width: 14px;
+  height: 14px;
+}
+
+.icon--md {
+  width: 18px;
+  height: 18px;
+}
+
+.iconbtn--sm {
+  width: 36px;
+  height: 36px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ==========================================================================
+   Shared primitives
+   ========================================================================== */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: var(--tap);
+  padding: 0 20px;
+  border-radius: var(--r-full);
+  background: var(--bg-elev-2);
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 600;
+  transition: transform 0.12s var(--ease), background 0.15s;
+}
+
+.btn:active {
+  transform: scale(0.96);
+}
+
+.btn--primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.btn--danger {
+  background: var(--danger);
+  color: #fff;
+}
+
+.btn--ghost {
+  background: transparent;
+  border: 1px solid var(--line);
+}
+
+.btn--block {
+  display: flex;
+  width: 100%;
+}
+
+.btn[disabled] {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.field {
+  display: block;
+  width: 100%;
+  min-height: var(--tap);
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg-elev);
+  /* 16px minimum, otherwise iOS Safari zooms the viewport on focus. */
+  font-size: 16px;
+}
+
+.field::placeholder {
+  color: var(--text-faint);
+}
+
+.label {
+  display: block;
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.stack {
+  display: grid;
+  gap: 14px;
+}
+
+.icon {
+  width: 24px;
+  height: 24px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* ==========================================================================
+   Lobby
+   ========================================================================== */
+
+.lobby {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  padding: calc(var(--safe-t) + 20px) calc(var(--safe-r) + 16px)
+    calc(var(--safe-b) + 24px) calc(var(--safe-l) + 16px);
+  max-width: 720px;
+  margin-inline: auto;
+}
+
+.masthead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 22px;
+}
+
+.masthead h1 {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: -0.02em;
+}
+
+.masthead .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--success);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--success) 20%, transparent);
+}
+
+.card {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--bg-elev);
+}
+
+.card + .card {
+  margin-top: 16px;
+}
+
+.card h2 {
+  margin: 0 0 14px;
+  font-size: 17px;
+  letter-spacing: -0.01em;
+}
+
+.card__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.hint {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+.row {
+  display: flex;
+  gap: 10px;
+}
+
+.row > * {
+  flex: 1;
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: var(--tap);
+}
+
+.toggle-row span {
+  font-size: 15px;
+}
+
+/* Native-feeling switch, built from a checkbox so it stays accessible. */
+.switch {
+  position: relative;
+  flex: none;
+  width: 52px;
+  height: 32px;
+  border-radius: var(--r-full);
+  background: var(--bg-elev-2);
+  border: 1px solid var(--line);
+  transition: background 0.2s var(--ease);
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.switch::after {
+  content: "";
+  position: absolute;
+  inset: 3px auto 3px 3px;
+  width: 24px;
+  border-radius: 50%;
+  background: var(--text);
+  transition: transform 0.22s var(--ease);
+}
+
+.switch:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.switch:checked::after {
+  background: #fff;
+  transform: translateX(20px);
+}
+
+.room-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.room {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg-elev);
+  text-align: left;
+  transition: transform 0.12s var(--ease);
+}
+
+.room:active {
+  transform: scale(0.985);
+}
+
+.room__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.room__name {
+  display: block;
+  font-size: 16px;
+  font-weight: 600;
+  /* Names are user-supplied and can be long; never let one break layout. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room__meta {
+  display: block;
+  margin-top: 3px;
+  font-size: 13px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room__count {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  padding: 6px 11px;
+  border-radius: var(--r-full);
+  background: var(--bg-elev-2);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.room__count[data-full="true"] {
+  color: var(--warn);
+}
+
+.empty {
+  padding: 28px 16px;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: 14px;
+}
+
+/* ==========================================================================
+   Call screen
+   ========================================================================== */
+
+.call {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  /* The call view owns the viewport: no pull-to-refresh, no rubber-banding. */
+  overscroll-behavior: none;
+  touch-action: pan-y;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: calc(var(--safe-t) + 10px) calc(var(--safe-r) + 14px) 10px
+    calc(var(--safe-l) + 14px);
+  /* Sits above the video so it needs its own legibility scrim. */
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.55), transparent);
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.topbar > * {
+  pointer-events: auto;
+}
+
+.topbar__title {
+  flex: 1;
+  min-width: 0;
+}
+
+.topbar__name {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbar__sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.iconbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--tap);
+  height: var(--tap);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: #fff;
+  transition: transform 0.12s var(--ease), background 0.15s;
+}
+
+.iconbtn:active {
+  transform: scale(0.92);
+}
+
+.iconbtn[aria-pressed="true"] {
+  background: #fff;
+  color: #0b0d10;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border-radius: var(--r-full);
+  background: rgba(255, 255, 255, 0.14);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.badge--secure {
+  color: var(--success);
+}
+
+.badge--warn {
+  color: var(--warn);
+}
+
+/* --- Video grid ----------------------------------------------------------
+   One column on a phone. The grid is intentionally driven by a data
+   attribute rather than auto-fit, because call layouts need exact control
+   over how N tiles pack — auto-fit produces awkward orphans at 3 and 5. */
+
+.grid {
+  flex: 1;
+  display: grid;
+  gap: 6px;
+  padding: 6px;
+  padding-top: calc(var(--safe-t) + 64px);
+  padding-bottom: 6px;
+  min-height: 0;
+  background: #000;
+}
+
+.grid[data-count="1"] {
+  grid-template-columns: 1fr;
+}
+
+/*
+ * Two people on a phone stack vertically. Splitting a 390px-wide portrait
+ * screen into two columns gives each face a tall sliver; one column gives
+ * both a landscape-ish frame that actually fits a head and shoulders.
+ */
+.grid[data-count="2"] {
+  grid-template-columns: 1fr;
+  grid-template-rows: repeat(2, 1fr);
+}
+
+.grid[data-count="3"],
+.grid[data-count="4"] {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.grid[data-count="5"],
+.grid[data-count="6"],
+.grid[data-count="7"],
+.grid[data-count="8"] {
+  grid-template-columns: repeat(2, 1fr);
+  /* Beyond four tiles a phone scrolls rather than shrinking faces to nothing. */
+  grid-auto-rows: minmax(30dvh, 1fr);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* A pinned speaker takes the whole stage; everyone else becomes a filmstrip. */
+.grid[data-pinned="true"] {
+  grid-template-columns: 1fr;
+  grid-auto-rows: auto;
+}
+
+.grid[data-pinned="true"] .tile:not(.tile--pinned) {
+  display: none;
+}
+
+.tile {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--r-md);
+  background: var(--bg-elev);
+  min-height: 0;
+}
+
+.tile video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  background: #000;
+}
+
+/* Your own camera is mirrored, because that is what a mirror does and every
+   native camera app matches it. Screen shares must never be mirrored. */
+.tile--self video[data-mirror="true"] {
+  transform: scaleX(-1);
+}
+
+.tile--screen video {
+  object-fit: contain;
+  background: #000;
+}
+
+.tile__avatar {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+
+.tile__initials {
+  display: grid;
+  place-items: center;
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  background: var(--bg-elev-2);
+  font-size: 30px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+
+.tile__label {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: var(--r-full);
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  width: fit-content;
+  max-width: calc(100% - 16px);
+}
+
+.tile__label span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Speaking ring. Uses box-shadow rather than border so it cannot shift layout. */
+.tile[data-speaking="true"] {
+  box-shadow: inset 0 0 0 3px var(--success);
+}
+
+.tile[data-connection="failed"] {
+  box-shadow: inset 0 0 0 3px var(--danger);
+}
+
+.tile__spinner {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* --- Waiting state ------------------------------------------------------- */
+
+.waiting {
+  position: absolute;
+  inset: auto 0 var(--controls-h, 92px);
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  padding: 0 16px;
+  /* The card is interactive; the area around it must not block the video. */
+  pointer-events: none;
+}
+
+.waiting__card {
+  position: relative;
+  pointer-events: auto;
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  width: min(100%, 380px);
+  padding: 20px;
+  border-radius: var(--r-lg);
+  background: color-mix(in srgb, var(--bg-elev) 92%, transparent);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--line);
+  text-align: center;
+}
+
+.waiting__title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.waiting__close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: transparent;
+  color: var(--text-dim);
+}
+
+.waiting__code {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 15px;
+  letter-spacing: 2px;
+  color: var(--text-dim);
+}
+
+/* --- Control bar ---------------------------------------------------------
+   Thumb-reachable, anchored to the bottom safe area. */
+
+.controls {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px calc(var(--safe-r) + 12px) calc(var(--safe-b) + 12px)
+    calc(var(--safe-l) + 12px);
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+}
+
+.ctrl {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--bg-elev-2);
+  color: var(--text);
+  transition: transform 0.12s var(--ease), background 0.15s, color 0.15s;
+}
+
+.ctrl:active {
+  transform: scale(0.9);
+}
+
+/* "off" is the loud state for mic and camera — matches Meet and FaceTime. */
+.ctrl[data-on="false"] {
+  background: var(--danger);
+  color: #fff;
+}
+
+.ctrl[data-active="true"] {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.ctrl--leave {
+  width: 68px;
+  background: var(--danger);
+  color: #fff;
+}
+
+.ctrl__badge {
+  position: absolute;
+  transform: translate(18px, -18px);
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--r-full);
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+
+/* Secondary controls live behind a "more" sheet on phones so the primary
+   bar never exceeds five items. */
+.ctrl--desktop-only {
+  display: none;
+}
+
+/* ==========================================================================
+   Bottom sheet (chat, participants, settings)
+   ========================================================================== */
+
+.sheet {
+  position: fixed;
+  inset: auto 0 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  max-height: 88dvh;
+  /* Height is driven by content up to the cap; the sheet slides from below. */
+  background: var(--bg-elev);
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+  border-top: 1px solid var(--line);
+  box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.45);
+  transform: translateY(101%);
+  transition: transform 0.34s var(--ease);
+  padding-bottom: var(--safe-b);
+  will-change: transform;
+}
+
+.sheet[data-open="true"] {
+  transform: translateY(0);
+}
+
+/* While a drag is in progress JS owns the transform, so kill the transition. */
+.sheet[data-dragging="true"] {
+  transition: none;
+}
+
+.sheet__scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 9;
+  background: rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s var(--ease);
+}
+
+.sheet__scrim[data-open="true"] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.sheet__grip {
+  flex: none;
+  display: grid;
+  place-items: center;
+  padding: 10px 0 6px;
+  /* The whole grip area is the drag handle, not just the visible pill. */
+  touch-action: none;
+  cursor: grab;
+}
+
+.sheet__grip::before {
+  content: "";
+  width: 40px;
+  height: 5px;
+  border-radius: var(--r-full);
+  background: var(--line);
+}
+
+.sheet__head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 16px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.sheet__head h2 {
+  flex: 1;
+  margin: 0;
+  font-size: 17px;
+}
+
+.sheet__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  /* Keep the scroll gesture inside the sheet. */
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 14px 16px;
+}
+
+/* --- Chat ---------------------------------------------------------------- */
+
+.msgs {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.msg {
+  max-width: 82%;
+  padding: 9px 13px;
+  border-radius: 18px;
+  background: var(--bg-elev-2);
+  font-size: 15px;
+  line-height: 1.4;
+  /* User text: never let a long token blow out the bubble. */
+  overflow-wrap: anywhere;
+  align-self: flex-start;
+  border-bottom-left-radius: 6px;
+}
+
+.msg--mine {
+  align-self: flex-end;
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-bottom-left-radius: 18px;
+  border-bottom-right-radius: 6px;
+}
+
+.msg__who {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 12px;
+  font-weight: 700;
+  opacity: 0.75;
+}
+
+.msg--system {
+  align-self: center;
+  max-width: 100%;
+  padding: 4px 12px;
+  border-radius: var(--r-full);
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 12.5px;
+}
+
+.msg__pending {
+  opacity: 0.55;
+}
+
+.composer {
+  flex: none;
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  padding: 10px 12px calc(10px + var(--safe-b));
+  border-top: 1px solid var(--line);
+  background: var(--bg-elev);
+}
+
+.composer textarea {
+  flex: 1;
+  min-height: var(--tap);
+  max-height: 120px;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: var(--bg);
+  font-size: 16px;
+  line-height: 1.35;
+  resize: none;
+}
+
+.composer .send {
+  flex: none;
+  width: var(--tap);
+  height: var(--tap);
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-ink);
+  display: grid;
+  place-items: center;
+}
+
+/* --- Participants -------------------------------------------------------- */
+
+.people {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.person {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 8px 4px;
+}
+
+.person__avatar {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--bg-elev-2);
+  font-size: 15px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.person__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+}
+
+.person__icons {
+  display: flex;
+  gap: 8px;
+  color: var(--text-faint);
+}
+
+.person__icons [data-off="true"] {
+  color: var(--danger);
+}
+
+.person__actions {
+  display: flex;
+  gap: 6px;
+  flex: none;
+}
+
+/* Compact but still a legal touch target: 44px tall, generous horizontally. */
+.chip {
+  min-height: 40px;
+  padding: 0 12px;
+  border-radius: var(--r-full);
+  border: 1px solid var(--line);
+  background: var(--bg-elev-2);
+  font-size: 13px;
+  font-weight: 600;
+  transition: transform 0.12s var(--ease);
+}
+
+.chip:active {
+  transform: scale(0.94);
+}
+
+.chip--danger {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+}
+
+/* --- Segmented control --------------------------------------------------- */
+
+.segmented {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 4px;
+  padding: 4px;
+  border-radius: var(--r-md);
+  background: var(--bg);
+  border: 1px solid var(--line);
+}
+
+.segment {
+  display: grid;
+  place-items: center;
+  gap: 4px;
+  min-height: 60px;
+  padding: 8px 4px;
+  border-radius: 10px;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+  transition: background 0.15s, color 0.15s, transform 0.12s var(--ease);
+}
+
+.segment:active {
+  transform: scale(0.96);
+}
+
+.segment[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* --- Invite -------------------------------------------------------------- */
+
+.invite__code {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 26px;
+  letter-spacing: 3px;
+  text-align: center;
+  padding: 14px;
+  border-radius: var(--r-md);
+  background: var(--bg-elev-2);
+}
+
+.invite__link {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  background: var(--bg-elev-2);
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
+/* --- Safety number ------------------------------------------------------- */
+
+.safety {
+  display: grid;
+  gap: 12px;
+  text-align: center;
+}
+
+.safety__emoji {
+  font-size: 34px;
+  letter-spacing: 8px;
+  line-height: 1.4;
+}
+
+.safety__code {
+  font-family: var(--mono);
+  font-size: 19px;
+  letter-spacing: 2px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
+/* ==========================================================================
+   Toasts
+   ========================================================================== */
+
+.toasts {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--safe-b) + 92px);
+  z-index: 40;
+  transform: translateX(-50%);
+  display: grid;
+  gap: 8px;
+  width: min(92vw, 420px);
+  pointer-events: none;
+}
+
+.toast {
+  padding: 11px 16px;
+  border-radius: var(--r-md);
+  background: var(--bg-elev-2);
+  border: 1px solid var(--line);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+  font-size: 14px;
+  text-align: center;
+  animation: toast-in 0.28s var(--ease);
+}
+
+.toast[data-tone="error"] {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
+/* ==========================================================================
+   Pre-join screen
+   ========================================================================== */
+
+.prejoin {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: calc(var(--safe-t) + 20px) calc(var(--safe-r) + 16px)
+    calc(var(--safe-b) + 20px) calc(var(--safe-l) + 16px);
+  background: var(--bg);
+  overflow-y: auto;
+}
+
+.prejoin__preview {
+  position: relative;
+  aspect-ratio: 3 / 4;
+  max-height: 42dvh;
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  background: var(--bg-elev);
+  margin-inline: auto;
+  width: 100%;
+  max-width: 420px;
+}
+
+.prejoin__preview video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);
+}
+
+.prejoin__form {
+  width: 100%;
+  max-width: 420px;
+  margin-inline: auto;
+}
+
+/* ==========================================================================
+   Larger screens
+   ========================================================================== */
+
+@media (min-width: 700px) {
+  .grid {
+    padding: 12px;
+    padding-top: calc(var(--safe-t) + 70px);
+    gap: 10px;
+  }
+
+  .grid[data-count="3"],
+  .grid[data-count="4"] {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .grid[data-count="5"],
+  .grid[data-count="6"] {
+    grid-template-columns: repeat(3, 1fr);
+    grid-auto-rows: 1fr;
+    overflow: hidden;
+  }
+
+  .grid[data-count="7"],
+  .grid[data-count="8"] {
+    grid-template-columns: repeat(4, 1fr);
+    grid-auto-rows: 1fr;
+    overflow: hidden;
+  }
+
+  .ctrl--desktop-only {
+    display: grid;
+  }
+
+  /* On a wide screen the sheet becomes a side rail instead of covering video. */
+  .sheet {
+    inset: 0 0 0 auto;
+    width: 380px;
+    max-height: none;
+    border-radius: 0;
+    border-top: 0;
+    border-left: 1px solid var(--line);
+    transform: translateX(101%);
+    padding-bottom: 0;
+  }
+
+  .sheet[data-open="true"] {
+    transform: translateX(0);
+  }
+
+  .sheet__grip {
+    display: none;
+  }
+
+  .sheet__scrim {
+    display: none;
+  }
+
+  .composer {
+    padding-bottom: 10px;
+  }
+}
+
+@media (min-width: 1000px) {
+  .grid[data-count="2"] {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* Landscape phone: the control bar must not eat the whole screen. */
+@media (max-height: 480px) and (orientation: landscape) {
+  .grid {
+    padding-top: calc(var(--safe-t) + 8px);
+  }
+
+  .topbar {
+    padding-top: calc(var(--safe-t) + 4px);
+    padding-bottom: 4px;
+  }
+
+  .ctrl {
+    width: 46px;
+    height: 46px;
+  }
+
+  .ctrl--leave {
+    width: 58px;
+  }
+
+  .controls {
+    padding-block: 6px calc(var(--safe-b) + 6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "name": "talkspace",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Realtime WebRTC mesh calling + chat on Cloudflare Workers and Durable Objects",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "build:wasm": "cd wasm/dsp && cargo build --release && cp target/wasm32-unknown-unknown/release/talkspace_dsp.wasm ../../public/wasm/dsp.wasm",
+    "test": "npm run typecheck && npm run test:api && npm run test:security && npm run test:host && npm run test:crypto && npm run test:browser && npm run test:mesh",
+    "test:api": "node test/api.mjs",
+    "test:security": "node test/security.mjs",
+    "test:crypto": "node test/crypto.mjs",
+    "test:browser": "node test/browser.mjs",
+    "test:mesh": "node test/mesh3.mjs",
+    "test:host": "node test/host.mjs",
+    "screenshots": "mkdir -p shots && node test/screenshots.mjs"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260820.1",
+    "puppeteer-core": "^25.8.0",
+    "typescript": "^5.6.3",
+    "wrangler": "^4.28.0"
+  }
+}
