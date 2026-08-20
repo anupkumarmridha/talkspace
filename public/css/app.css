@@ -724,6 +724,61 @@ button {
   }
 }
 
+/* The waiting screen has little content, so centre it rather than stranding
+   it against the top edge. */
+#knocking {
+  justify-content: center;
+}
+
+/* --- Knocking ------------------------------------------------------------ */
+
+.knocks {
+  position: absolute;
+  top: calc(var(--safe-t) + 62px);
+  left: 0;
+  right: 0;
+  z-index: 4;
+  display: grid;
+  gap: 8px;
+  padding: 0 12px;
+}
+
+.knock {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--bg-elev) 94%, transparent);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--line);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.knock__name {
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chip--go {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.knock__spinner {
+  width: 40px;
+  height: 40px;
+  margin-inline: auto;
+  border: 3px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
 /* --- Waiting state ------------------------------------------------------- */
 
 .waiting {

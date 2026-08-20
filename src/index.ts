@@ -1,8 +1,15 @@
 import { Lobby } from "./lobby";
 import { SignalRoom } from "./signal-room";
 import { getIceServers } from "./ice";
-import { randomId, randomRoomCode, signJoinToken, verifyJoinToken } from "./crypto";
-import { LIMITS } from "./protocol";
+import {
+  randomId,
+  randomRoomCode,
+  signJoinToken,
+  signOwnerToken,
+  verifyJoinToken,
+  verifyOwnerToken,
+} from "./crypto";
+import { LIMITS, ROOM_TTL_MS } from "./protocol";
 
 export { Lobby, SignalRoom };
 
@@ -159,7 +166,15 @@ async function createRoom(request: Request, env: Env): Promise<Response> {
     passcode || undefined,
   );
 
-  return json({ room: meta }, 201, { "Cache-Control": "no-store" });
+  // Whoever creates the room owns it, for as long as it exists. The token is
+  // the only thing that confers host rights, which is what keeps the host
+  // stable across reloads and rejoins.
+  const room = env.SIGNAL_ROOM.getByName(id);
+  const ownerToken = (await room.claimOwner())
+    ? await signOwnerToken(await getSigningSecret(env), id, ROOM_TTL_MS)
+    : null;
+
+  return json({ room: meta, ownerToken }, 201, { "Cache-Control": "no-store" });
 }
 
 /**
@@ -199,14 +214,44 @@ async function issueJoinToken(request: Request, env: Env): Promise<Response> {
     return json({ error: "room_full", maxPeers: meta.maxPeers }, 409);
   }
 
-  const token = await signJoinToken(await getSigningSecret(env), {
+  const secret = await getSigningSecret(env);
+
+  // Ownership is proven by a token the client keeps, so a reload or a rejoin
+  // restores host rights to the same person rather than handing them to
+  // whoever is currently in the room.
+  let isOwner = false;
+  let ownerToken: string | null = null;
+
+  if (typeof body.ownerToken === "string") {
+    isOwner = Boolean(await verifyOwnerToken(secret, body.ownerToken, roomId));
+  }
+
+  // A room reached by link alone has no creator, so the first person through
+  // the door becomes its owner. After that claimOwner() always refuses.
+  if (!isOwner && (await room.claimOwner())) {
+    isOwner = true;
+    ownerToken = await signOwnerToken(secret, roomId, ROOM_TTL_MS);
+  }
+
+  const token = await signJoinToken(secret, {
     rid: roomId,
     pid: randomId(9),
     nm: name,
     exp: Date.now() + 120_000,
+    own: isOwner,
   });
 
-  return json({ token, room: meta }, 200, { "Cache-Control": "no-store" });
+  return json(
+    {
+      token,
+      room: meta,
+      ownerToken,
+      isOwner,
+      needsApproval: await room.requiresApproval(isOwner),
+    },
+    200,
+    { "Cache-Control": "no-store" },
+  );
 }
 
 async function joinRoomSocket(
@@ -240,6 +285,7 @@ async function joinRoomSocket(
   upgrade.headers.set("x-peer-id", claims.pid);
   upgrade.headers.set("x-peer-name", claims.nm);
   upgrade.headers.set("x-peer-pub", pub);
+  upgrade.headers.set("x-peer-owner", claims.own ? "1" : "0");
 
   return env.SIGNAL_ROOM.getByName(roomId).fetch(upgrade);
 }

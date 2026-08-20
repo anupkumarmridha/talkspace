@@ -147,6 +147,19 @@
       </div>
     </section>
 
+    <!-- ===================== Waiting to be let in ===================== -->
+    <section class="prejoin" id="knocking" hidden>
+      <div class="prejoin__form stack u-center">
+        <div class="knock__spinner" aria-hidden="true"></div>
+        <p class="waiting__title">Asking to be let in…</p>
+        <p class="hint">
+          <span id="knocking-room">This room</span> is private. Someone inside
+          has to admit you.
+        </p>
+        <button class="btn btn--ghost btn--block" id="knock-cancel" type="button">Cancel</button>
+      </div>
+    </section>
+
     <!-- ===================== Call ===================== -->
     <div class="call" id="call" hidden>
       <header class="topbar">
@@ -167,6 +180,8 @@
           <svg class="icon" aria-hidden="true"><use href="#i-shield" /></svg>
         </button>
       </header>
+
+      <div class="knocks" id="knocks" hidden aria-live="polite"></div>
 
       <div class="grid" id="grid" data-count="1"></div>
 

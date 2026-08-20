@@ -82,19 +82,25 @@ const settle = (ms = 400) => new Promise((r) => setTimeout(r, ms));
 
 // --- Host assignment --------------------------------------------------------
 
-console.log("\n== the first participant becomes host ==");
-let code = (await post("/api/rooms", { name: "Host test" })).body.room.id;
+console.log("\n== the room's creator is its host ==");
+const made = (await post("/api/rooms", { name: "Host test" })).body;
+let code = made.room.id;
+check("creating a room yields an owner token", typeof made.ownerToken === "string");
 
-const A = connect(code, await join(code, "Ada"));
+// Host rights come from the token, so the owner must present it when joining.
+const adaJoin = (await post("/api/join", { roomId: code, name: "Ada", ownerToken: made.ownerToken })).body;
+const bobJoin = (await post("/api/join", { roomId: code, name: "Bob" })).body;
+
+const A = connect(code, adaJoin.token);
 await A.open();
 const wa = await A.wait((f) => f.t === "welcome");
-check("first joiner is host", wa.hostId === wa.self.id);
+check("the owner is host", wa.hostId === wa.self.id);
 
-const Bp = connect(code, await join(code, "Bob"));
+const Bp = connect(code, bobJoin.token);
 await Bp.open();
 const wb = await Bp.wait((f) => f.t === "welcome");
-check("second joiner sees the same host", wb.hostId === wa.self.id);
-check("second joiner is not host", wb.hostId !== wb.self.id);
+check("the other participant sees the same host", wb.hostId === wa.self.id);
+check("and is not host themselves", wb.hostId !== wb.self.id);
 
 // --- Authorisation ----------------------------------------------------------
 
@@ -103,28 +109,24 @@ Bp.send({ t: "host", action: "kick", target: wa.self.id });
 const denied = await Bp.wait((f) => f.t === "error" && f.code === "not_host");
 check("a non-host kick is refused", denied.code === "not_host");
 await settle();
-check("the host stayed connected", A.closeCode === null, `close=${A.closeCode} reason="${A.closeReason}" frames=${JSON.stringify(A.frames.map((f) => f.t + (f.code ? "/" + f.code : "")))}`);
+check("the host stayed connected", A.closeCode === null, `close=${A.closeCode}`);
 
 // --- Mute -------------------------------------------------------------------
 
 console.log("\n== host mute and unmute are both enforced ==");
 A.send({ t: "host", action: "mute", target: wb.self.id });
 const muted = await Bp.wait((f) => f.t === "force-mute");
-check("target receives force-mute", muted.by === "Ada");
-check("it names who did it", typeof muted.by === "string" && muted.by.length > 0);
+check("target receives force-mute", muted?.by === "Ada");
 
 A.send({ t: "host", action: "unmute", target: wb.self.id });
 const unmuted = await Bp.wait((f) => f.t === "force-unmute");
-check("target receives force-unmute", unmuted.by === "Ada");
+check("target receives force-unmute", unmuted?.by === "Ada");
 
-// Neither is available to a non-host.
 Bp.send({ t: "host", action: "unmute", target: wa.self.id });
 const deniedUnmute = await Bp.wait((f) => f.t === "error" && f.code === "not_host", 4000);
-check("a non-host unmute is refused", deniedUnmute.code === "not_host");
+check("a non-host unmute is refused", Boolean(deniedUnmute));
 await settle();
 check("the host was not unmuted by a guest", !A.frames.some((f) => f.t === "force-unmute"));
-
-// --- Kick -------------------------------------------------------------------
 
 console.log("\n== host removal ==");
 A.send({ t: "host", action: "kick", target: wb.self.id });
@@ -139,26 +141,57 @@ check("the block is scoped to that person", other.status === 200, `status=${othe
 
 // --- Handover ---------------------------------------------------------------
 
-console.log("\n== the chair passes on when the host leaves ==");
+console.log("\n== the host is stable, not passed around ==");
 code = (await post("/api/rooms", { name: "Handover" })).body.room.id;
-const H1 = connect(code, await join(code, "Host1"));
-await H1.open();
-const wh1 = await H1.wait((f) => f.t === "welcome");
 
-const H2 = connect(code, await join(code, "Next"));
-await H2.open();
-const wh2 = await H2.wait((f) => f.t === "welcome");
-check("host is the first joiner", wh2.hostId === wh1.self.id);
+// Creating the room hands out an owner token; that, and only that, confers
+// host rights from here on.
+const created = (await post("/api/rooms", { name: "Owned" })).body;
+check("creating a room yields an owner token", typeof created.ownerToken === "string");
 
-H1.ws.close();
-const promoted = await H2.wait((f) => f.t === "host", 5000);
-check("remaining participant is promoted", promoted.id === wh2.self.id, promoted.id);
+const owned = created.room.id;
+const ownerJoin = (await post("/api/join", { roomId: owned, name: "Owner", ownerToken: created.ownerToken })).body;
+check("the token holder is recognised as owner", ownerJoin.isOwner === true);
 
-// --- Ending -----------------------------------------------------------------
+const strangerJoin = (await post("/api/join", { roomId: owned, name: "Stranger" })).body;
+check("someone without the token is not", strangerJoin.isOwner !== true);
+
+const O1 = connect(owned, ownerJoin.token);
+await O1.open();
+const wo1 = await O1.wait((f) => f.t === "welcome");
+check("the owner is host on arrival", wo1.hostId === wo1.self.id);
+
+const S1 = connect(owned, strangerJoin.token);
+await S1.open();
+const ws1 = await S1.wait((f) => f.t === "welcome");
+check("the other participant sees the owner as host", ws1.hostId === wo1.self.id);
+
+// The owner leaving must NOT promote anyone.
+O1.ws.close();
+const vacated = await S1.wait((f) => f.t === "host", 5000);
+check("the chair is vacated, not handed over", vacated?.id === "", JSON.stringify(vacated));
+
+// And returning restores it, despite a brand new peer id.
+const back = (await post("/api/join", { roomId: owned, name: "Owner", ownerToken: created.ownerToken })).body;
+const O2 = connect(owned, back.token);
+await O2.open();
+const wo2 = await O2.wait((f) => f.t === "welcome");
+check("the owner regains host on return", wo2.hostId === wo2.self.id);
+check("with a different peer id than before", wo2.self.id !== wo1.self.id);
+
+const regained = await S1.wait((f) => f.t === "host" && f.id !== "", 5000);
+check("others are told the host is back", regained?.id === wo2.self.id);
+
+O2.ws.close();
+S1.ws.close();
 
 console.log("\n== ending the meeting retires the code ==");
-code = (await post("/api/rooms", { name: "Endable" })).body.room.id;
-const E1 = connect(code, await join(code, "Owner"));
+const endable = (await post("/api/rooms", { name: "Endable" })).body;
+code = endable.room.id;
+const E1 = connect(
+  code,
+  (await post("/api/join", { roomId: code, name: "Owner", ownerToken: endable.ownerToken })).body.token,
+);
 await E1.open();
 await E1.wait((f) => f.t === "welcome");
 const E2 = connect(code, await join(code, "Guest"));

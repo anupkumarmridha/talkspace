@@ -29,6 +29,8 @@ import {
 const NAME_KEY = "talkspace:name";
 const OUTPUT_KEY = "talkspace:output";
 const SINK_KEY = "talkspace:sink";
+/** Owner tokens are per-room; ownership of one room says nothing about another. */
+const ownerKey = (id) => `talkspace:owner:${id}`;
 
 const roomId = decodeURIComponent(location.pathname.replace(/^\/r\//, "")).toLowerCase();
 
@@ -61,6 +63,8 @@ const state = {
   waitingDismissed: false,
   /** Peers whose camera we are currently asking for. */
   subscribed: new Set(),
+  /** peerId -> name, for people waiting to be let in. */
+  knocks: new Map(),
 };
 
 const isHost = () => state.self?.id && state.self.id === state.hostId;
@@ -182,13 +186,14 @@ async function join() {
     state.certificate = certificate;
     state.dtls = certificate ? pickSha256(certificate) : "";
 
-    const [{ token, room }, ice] = await Promise.all([
+    const [{ token, room, ownerToken, needsApproval }, ice] = await Promise.all([
       api("/api/join", {
         method: "POST",
         body: JSON.stringify({
           roomId,
           name,
           passcode: $("#prejoin-passcode").value || undefined,
+          ownerToken: store.get(ownerKey(roomId), null) ?? undefined,
         }),
       }),
       api("/api/ice"),
@@ -204,15 +209,23 @@ async function join() {
       console.info("No TURN server configured; peers behind symmetric NAT may fail to connect.");
     }
 
+    // Granted on creation, or to the first person through the door of a room
+    // reached by link. Kept so host rights survive a reload or a rejoin.
+    if (ownerToken) store.set(ownerKey(roomId), ownerToken);
+
     // Held until `welcome`: the mesh cannot be built before the server has
     // assigned our peer id, because politeness is derived by comparing ids.
     state.ice = ice.iceServers;
+    state.needsApproval = Boolean(needsApproval);
 
     await startLocalMedia();
     openSignal(token);
 
     prejoin.hidden = true;
-    $("#call").hidden = false;
+    // The server already told us whether this room will hold us at the door,
+    // so go straight to the right screen rather than flashing the call UI.
+    if (state.needsApproval) $("#knocking").hidden = false;
+    else $("#call").hidden = false;
     state.joined = true;
     wakeLock.enable();
   } catch (err) {
@@ -465,6 +478,7 @@ function openSignal(firstToken) {
             roomId,
             name: state.self?.name ?? nameInput.value.trim(),
             passcode: $("#prejoin-passcode").value || undefined,
+            ownerToken: store.get(ownerKey(roomId), null) ?? undefined,
           }),
         }));
       } catch (err) {
@@ -529,6 +543,28 @@ function openSignal(firstToken) {
     haptic([30, 60, 30]);
   });
 
+  // We are connected but not in the room yet.
+  signal.addEventListener("waiting", () => {
+    $("#call").hidden = true;
+    $("#knocking").hidden = false;
+    $("#knocking-room").textContent = state.room?.name ?? roomId;
+  });
+
+  // Someone is at the door.
+  signal.addEventListener("knock", (e) => {
+    const { id, name } = e.detail.peer;
+    state.knocks.set(id, name);
+    renderKnocks();
+    // No toast: renderKnocks already puts a persistent banner with Admit and
+    // Deny at the top of the screen, and two notices for one event is noise.
+    haptic([20, 60, 20]);
+  });
+
+  signal.addEventListener("knock-gone", (e) => {
+    state.knocks.delete(e.detail.id);
+    renderKnocks();
+  });
+
   signal.addEventListener("alone-warning", (e) => {
     const minutes = Math.max(1, Math.round(e.detail.closesInMs / 60000));
     toast(
@@ -549,6 +585,8 @@ function openSignal(firstToken) {
   signal.addEventListener("error", (e) => {
     const { code, message } = e.detail;
     if (code === "abandoned") return leave("Call ended — you were the only one here");
+    if (code === "denied") return leave("Your request to join was declined");
+    if (code === "no_answer") return leave("Nobody answered your request to join");
 
     // Act on the application frame, not the close code. A WebSocket close
     // handshake is best-effort -- it can stall behind a proxy or when the
@@ -569,6 +607,8 @@ function openSignal(firstToken) {
     if (code === 4005) return leave("The host removed you from the call");
     if (code === 4006) return leave("The meeting has ended");
     if (code === 4007) return leave("Call ended — you were the only one here");
+    if (code === 4008) return leave("Your request to join was declined");
+    if (code === 4009) return leave("Nobody answered your request to join");
     if (code >= 4000 && code < 5000) return leave("Disconnected");
     setConnStatus("offline");
   });
@@ -625,6 +665,10 @@ async function onWelcome({ self, room, peers, hostId }) {
   }
   state.peers.clear();
   state.pinned = null;
+
+  // Admission (or an ordinary join) both arrive as `welcome`.
+  $("#knocking").hidden = true;
+  $("#call").hidden = false;
 
   ensureSelfTile();
 
@@ -1179,8 +1223,43 @@ function refreshVideoSubscriptions() {
   state.mesh.setVideoSubscriptions(chosen);
 }
 
+/**
+ * Render the queue at the door.
+ *
+ * Shown to whoever can actually answer: the host when one is present, and
+ * otherwise everybody, because a private room whose owner stepped out would
+ * be impossible to enter if nobody else could open the door.
+ */
+function renderKnocks() {
+  const bar = $("#knocks");
+  bar.textContent = "";
+
+  const canAdmit = !state.hostId || isHost();
+  const waiting = canAdmit ? [...state.knocks] : [];
+
+  bar.hidden = waiting.length === 0;
+
+  for (const [id, name] of waiting) {
+    const row = el("div", { class: "knock" });
+    row.append(el("div", { class: "person__avatar" }, initials(name)));
+    row.append(el("div", { class: "u-grow knock__name" }, `${name} wants to join`));
+
+    const answer = (allow) => {
+      state.signal.send({ t: "admit", target: id, allow });
+      state.knocks.delete(id);
+      renderKnocks();
+      haptic();
+    };
+
+    row.append(el("button", { class: "chip chip--danger", type: "button", onclick: () => answer(false) }, "Deny"));
+    row.append(el("button", { class: "chip chip--go", type: "button", onclick: () => answer(true) }, "Admit"));
+    bar.append(row);
+  }
+}
+
 function refreshAll() {
   refreshGridCount();
+  renderKnocks();
   refreshVideoSubscriptions();
   renderPeople();
   $("#people-count").textContent = String(state.peers.size + 1);
@@ -1596,6 +1675,8 @@ $("#waiting-close").addEventListener("click", () => {
 $("#share-btn").addEventListener("click", openInvite);
 
 $("#leave-btn").addEventListener("click", () => leave());
+
+$("#knock-cancel").addEventListener("click", () => leave());
 
 $("#end-btn").addEventListener("click", () => {
   if (!isHost()) return;

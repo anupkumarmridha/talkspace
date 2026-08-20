@@ -81,6 +81,8 @@ export type ClientFrame =
   /** Presence only -- booleans that drive other people's UI. */
   | { t: "state"; state: Partial<PeerState> }
   | ({ t: "host" } & HostAction)
+  /** Answer someone waiting to be let in. */
+  | { t: "admit"; target: string; allow: boolean }
   | { t: "bye" };
 
 /** Frames the room Durable Object sends to the browser. */
@@ -98,6 +100,12 @@ export type ServerFrame =
   | { t: "force-unmute"; by: string }
   /** You are alone and the session will be closed unless someone joins. */
   | { t: "alone-warning"; closesInMs: number }
+  /** You are not in the room yet -- someone inside has to let you in. */
+  | { t: "waiting"; position: number }
+  /** Somebody is asking to be let in. Shown to whoever can admit them. */
+  | { t: "knock"; peer: { id: string; name: string } }
+  /** A waiting person gave up or was answered; drop them from the UI. */
+  | { t: "knock-gone"; id: string }
   | { t: "error"; code: string; message: string };
 
 /** Frames the lobby Durable Object sends to the browser. */
@@ -115,6 +123,14 @@ export interface Attachment {
   pub: string;
   state: PeerState;
   joinedAt: number;
+  /**
+   * True while this socket is at the door rather than in the room. A waiting
+   * socket is connected but is not a participant: it is absent from the peer
+   * list, receives no signalling, and holds no seat.
+   */
+  waiting?: boolean;
+  /** Holder of the room's owner token. Host rights follow this, not arrival order. */
+  owner?: boolean;
 }
 
 export const CLOSE_ROOM_FULL = 4001;
@@ -136,6 +152,11 @@ export const ROOM_TTL_MS = 24 * 60 * 60 * 1000;
 export const ALONE_WARN_MS = 5 * 60 * 1000;
 export const ALONE_CLOSE_MS = 6 * 60 * 1000;
 export const CLOSE_ABANDONED = 4007;
+export const CLOSE_DENIED = 4008;
+export const CLOSE_KNOCK_TIMEOUT = 4009;
+
+/** How long someone may wait at the door before being turned away. */
+export const KNOCK_TIMEOUT_MS = 2 * 60 * 1000;
 
 /** How long a removed participant is kept out before they may knock again. */
 export const KICK_BLOCK_MS = 2 * 60 * 1000;

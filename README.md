@@ -127,10 +127,20 @@ to the server. Metadata privacy is a different and much harder problem.
 
 ## Host controls
 
-The first person to join takes the chair; if they leave it passes to whoever
-has been present longest. Every action is authorised inside the Durable Object
-— the client hides buttons from non-hosts as a courtesy, but that is not what
-enforces it.
+**The host does not move.** Whoever creates a room owns it, and keeps host
+rights for the room's whole life — through a reload, a reconnect, or leaving
+and coming back. There are no accounts, so "the same person" cannot be
+recognised by identity: a rejoin mints a brand new peer id. Ownership is a
+capability instead. The creator is handed an unguessable signed token, keeps it
+in `localStorage`, and presents it on every join.
+
+When the owner is away the room simply has **no host** — the chair is vacated
+rather than handed to whoever happens to be present. A room reached by link
+alone has no creator, so the first person through the door claims it; after
+that the claim is refused forever.
+
+Every action is authorised inside the Durable Object — the client hides buttons
+from non-hosts as a courtesy, but that is not what enforces it.
 
 | Action | Behaviour |
 |---|---|
@@ -141,6 +151,19 @@ enforces it.
 | **End meeting** | Disconnects everyone and retires the room code permanently. |
 
 Reach them by tapping someone's tile, or from the participants list.
+
+### Knock to join
+
+Private rooms hold strangers at the door. A waiting person is connected but is
+genuinely *outside* the room: absent from the participant list, holding no
+seat, receiving no signalling, and unable to reach anyone inside. The host sees
+**Admit** / **Deny**; unanswered requests expire after two minutes.
+
+Two cases deliberately skip it. The owner never waits, and an **empty** private
+room lets people straight in — there is nobody inside to ask and no privacy to
+protect. If people are present but the owner is away, any participant may
+answer, otherwise a private room whose owner stepped out would be permanently
+shut.
 
 > **A note on enforced unmute.** Meet, Zoom and Teams will all *ask* rather
 > than unmute you. Their reasoning is that muting only reduces what a
@@ -221,7 +244,7 @@ To test a real call you need two participants. Any of these work:
 Start the dev server in one terminal, then in another:
 
 ```bash
-npm test              # everything: typecheck + 9 suites
+npm test              # everything: typecheck + 10 suites
 ```
 
 Or individually:
@@ -237,6 +260,7 @@ Or individually:
 | `npm run test:mesh` | Three peers: every pair connected, ladder, cleanup |
 | `npm run test:resilience` | Reconnect after a dropped socket; video subscription caps |
 | `npm run test:turn` | Four-person call end to end; relay-only connection |
+| `npm run test:knock` | Waiting room, admit/deny, and who is allowed to answer |
 | `npm run test:abandoned` | Lone participant warned then disconnected (own Worker) |
 
 The browser suites drive real Chrome with fake capture devices, and assert on
@@ -411,10 +435,10 @@ Room lifetime (`ROOM_TTL_MS`) and the removal cool-off (`KICK_BLOCK_MS`) are in
   for getting started; run `npm run setup:turn` for anything you depend on.
 - **Chat is not persisted.** That is deliberate: the server stores no messages,
   so someone joining late sees no history.
-- **Host is the first joiner**, passing to the longest-present participant when
-  they leave. There are no accounts, so there is no stronger notion of
-  ownership — and the removal block is by display name, which is a speed bump
-  rather than access control.
+- **Ownership lives in `localStorage`.** Clearing site data loses host rights
+  to that room permanently, and there are no accounts to recover them from. The
+  removal block is by display name, which is a speed bump rather than access
+  control.
 - **Safety numbers only help if someone checks them.**
 
 ## Licence

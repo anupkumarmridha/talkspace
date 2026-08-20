@@ -16,6 +16,8 @@ export interface JoinClaims {
   nm: string;
   /** Expiry, epoch ms. */
   exp: number;
+  /** Holder of the room's owner token, verified before the token was signed. */
+  own?: boolean;
 }
 
 const encoder = new TextEncoder();
@@ -62,6 +64,66 @@ export async function verifyJoinToken(
     if (typeof claims.exp !== "number" || claims.exp < Date.now()) return null;
     if (typeof claims.rid !== "string" || typeof claims.pid !== "string") return null;
     if (typeof claims.nm !== "string") return null;
+    return claims;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Proof that the bearer owns a room.
+ *
+ * There are no accounts, so "the same person" cannot be recognised across
+ * visits by identity -- a rejoin mints a brand new peer id. Ownership is
+ * therefore a capability: the room's creator is handed an unguessable signed
+ * token, keeps it in localStorage, and presents it on every join. That is what
+ * makes the host stable across a reload, a reconnect, or leaving and coming
+ * back, instead of the chair sliding to whoever happens to be present.
+ *
+ * It lives as long as the room does.
+ */
+export interface OwnerClaims {
+  rid: string;
+  role: "owner";
+  exp: number;
+}
+
+export async function signOwnerToken(
+  secret: string,
+  rid: string,
+  ttlMs: number,
+): Promise<string> {
+  const body = b64urlEncode(
+    encoder.encode(JSON.stringify({ rid, role: "owner", exp: Date.now() + ttlMs })),
+  );
+  const key = await importKey(secret);
+  const sig = await crypto.subtle.sign("HMAC", key, encoder.encode(body));
+  return `${body}.${b64urlEncode(new Uint8Array(sig))}`;
+}
+
+/** Returns the claims when the token is valid for this room, else null. */
+export async function verifyOwnerToken(
+  secret: string,
+  token: string,
+  rid: string,
+): Promise<OwnerClaims | null> {
+  const dot = token.indexOf(".");
+  if (dot <= 0) return null;
+
+  const body = token.slice(0, dot);
+  const sig = b64urlDecode(token.slice(dot + 1));
+  if (!sig) return null;
+
+  const key = await importKey(secret);
+  if (!(await crypto.subtle.verify("HMAC", key, sig, encoder.encode(body)))) return null;
+
+  const raw = b64urlDecode(body);
+  if (!raw) return null;
+
+  try {
+    const claims = JSON.parse(decoder.decode(raw)) as OwnerClaims;
+    if (claims.role !== "owner" || claims.rid !== rid) return null;
+    if (typeof claims.exp !== "number" || claims.exp < Date.now()) return null;
     return claims;
   } catch {
     return null;
