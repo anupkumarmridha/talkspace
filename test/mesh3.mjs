@@ -123,7 +123,7 @@ try {
   console.log("\n== safety number agrees across all three ==");
   for (const ctx of all) {
     await ctx.page.bringToFront();
-    await ctx.page.click("#safety-btn");
+    await ctx.page.evaluate(() => document.querySelector("#safety-btn").click());
   }
 
   // The number is derived partly from DTLS fingerprints, which arrive with

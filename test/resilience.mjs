@@ -127,6 +127,20 @@ try {
     await waitFor(ada, () => document.querySelectorAll(".tile").length >= 2, 20000),
   );
 
+  // The other side must see one person reconnect, not a stranger arrive while
+  // a frozen ghost of the old session lingers.
+  await new Promise((r) => setTimeout(r, 3000));
+  const graceTiles = await grace.page.evaluate(() => document.querySelectorAll(".tile").length);
+  check("no ghost tile on the other side", graceTiles === 2, `tiles=${graceTiles}`);
+  check(
+    "media reconnects to the same participant",
+    await waitFor(
+      grace,
+      () => [...document.querySelectorAll(".tile[data-connection]")].every((t) => t.dataset.connection === "connected"),
+      25000,
+    ),
+  );
+
   // A new peer joining after the reconnect proves signalling really works,
   // not just that the socket is open.
   const linus = await joinAs(code, "Linus");

@@ -8,6 +8,7 @@ import {
   CLOSE_DENIED,
   CLOSE_ENDED,
   CLOSE_KNOCK_TIMEOUT,
+  CLOSE_SUPERSEDED,
   KNOCK_TIMEOUT_MS,
   CLOSE_FLOOD,
   CLOSE_REMOVED,
@@ -185,15 +186,36 @@ export class SignalRoom extends DurableObject<Env> {
       return new Response("Bad join", { status: 400 });
     }
 
-    const peers = this.peerList();
+    // The same participant coming back on a new socket does not need a
+    // second seat: their old one is the one still counted.
+    const peers = this.peerList().filter((p) => p.id !== id);
     if (peers.length >= meta.maxPeers) {
       return new Response("Room full", { status: 409 });
+    }
+
+    // Retire the old socket quietly. It is not a departure, it holds no seat,
+    // and it must not appear in the peer list they are about to receive.
+    const stale = this.ctx.getWebSockets().filter((ws) => {
+      const a = ws.deserializeAttachment() as Attachment | null;
+      return a?.id === id && !a.superseded;
+    });
+    for (const ws of stale) {
+      const a = ws.deserializeAttachment() as Attachment;
+      ws.serializeAttachment({ ...a, superseded: true });
     }
 
     const isOwner = request.headers.get("x-peer-owner") === "1";
 
     const [client, server] = Object.values(new WebSocketPair());
     this.ctx.acceptWebSocket(server);
+
+    for (const ws of stale) {
+      try {
+        ws.close(CLOSE_SUPERSEDED, "reconnected elsewhere");
+      } catch {
+        /* already gone */
+      }
+    }
 
     const attachment: Attachment = {
       id,
@@ -438,6 +460,9 @@ export class SignalRoom extends DurableObject<Env> {
 
   private async departed(ws: WebSocket): Promise<void> {
     const me = ws.deserializeAttachment() as Attachment | null;
+    // A superseded socket belongs to someone who is still here on a newer
+    // one. Nothing to announce; the seat was never theirs to give up.
+    if (me?.superseded) return;
     if (me) {
       this.buckets.delete(me.id);
       this.broadcast({ t: "peer-left", id: me.id, name: me.name }, me.id);
@@ -596,7 +621,7 @@ export class SignalRoom extends DurableObject<Env> {
     for (const ws of this.ctx.getWebSockets()) {
       if (ws === exclude) continue;
       const a = ws.deserializeAttachment() as Attachment | null;
-      if (a && !a.waiting) out.push(toPeerInfo(a));
+      if (a && !a.waiting && !a.superseded) out.push(toPeerInfo(a));
     }
     return out.sort((a, b) => a.joinedAt - b.joinedAt);
   }

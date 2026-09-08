@@ -18,6 +18,26 @@
 const DISMISS_DISTANCE = 96; // px
 const DISMISS_VELOCITY = 0.5; // px per ms
 
+/**
+ * Keep sheets above the on-screen keyboard.
+ *
+ * Android resizes the layout viewport when the keyboard opens (see the
+ * `interactive-widget` viewport hint), so a bottom-anchored sheet just moves
+ * up. iOS does not: it slides a smaller *visual* viewport over the page and
+ * leaves fixed elements where they were -- underneath the keyboard. Measuring
+ * the difference and lifting the sheet by that much makes both behave alike.
+ */
+if (window.visualViewport) {
+  const vv = window.visualViewport;
+  const sync = () => {
+    const covered = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+    document.documentElement.style.setProperty("--kb", `${Math.round(covered)}px`);
+  };
+  vv.addEventListener("resize", sync);
+  vv.addEventListener("scroll", sync);
+  sync();
+}
+
 export class Sheet {
   #root;
   #scrim;
@@ -79,7 +99,7 @@ export class Sheet {
 
   #onDown = (event) => {
     // The side-rail layout has no grip, but guard anyway.
-    if (!this.#open || window.innerWidth >= 700) return;
+    if (!this.#open || window.matchMedia("(min-width: 840px)").matches) return;
 
     this.#drag = {
       startY: event.clientY,

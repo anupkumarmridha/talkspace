@@ -35,6 +35,56 @@ function requireName() {
 
 // --- Create ------------------------------------------------------------------
 
+// "New meeting" starts an instant meeting, named by its code, exactly as Meet
+// does. The privacy choices live behind a small "Meeting options" link so
+// they are one tap away but never in the way.
+const createForm = $("#create-form");
+const newMeetingBtn = $("#new-meeting-btn");
+const optionsBtn = $("#create-options-btn");
+
+function setCreateOpen(open) {
+  createForm.hidden = !open;
+  optionsBtn.setAttribute("aria-expanded", String(open));
+  if (open) createForm.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+optionsBtn.addEventListener("click", () => {
+  haptic();
+  setCreateOpen(createForm.hidden);
+});
+$("#create-cancel").addEventListener("click", () => setCreateOpen(false));
+
+async function createRoom({ isPublic, passcode }, button) {
+  const name = requireName();
+  if (!name) return;
+
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = "Starting…";
+
+  try {
+    const { room } = await api("/api/rooms", {
+      method: "POST",
+      body: JSON.stringify({ isPublic, passcode: passcode || undefined }),
+    });
+    haptic(12);
+    location.href = `/r/${room.id}`;
+  } catch (err) {
+    toast(err.message === "bad_json" ? "Could not create the meeting" : "Something went wrong", "error");
+    button.disabled = false;
+    button.textContent = label;
+  }
+}
+
+newMeetingBtn.addEventListener("click", () => createRoom({ isPublic: true }, newMeetingBtn));
+
+// The home-screen shortcut lands here wanting a new room straight away.
+if (new URLSearchParams(location.search).get("new") === "1") {
+  history.replaceState(null, "", "/");
+  if (nameInput.value.trim()) newMeetingBtn.click();
+  else nameInput.focus();
+}
+
 // The passcode field only makes sense for unlisted rooms, so it appears with
 // the toggle rather than sitting there confusing everyone.
 const isPublic = $("#is-public");
@@ -45,31 +95,9 @@ isPublic.addEventListener("change", () => {
   if (isPublic.checked) $("#passcode").value = "";
 });
 
-$("#create-form").addEventListener("submit", async (event) => {
+createForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  const name = requireName();
-  if (!name) return;
-
-  const button = $("#create-btn");
-  button.disabled = true;
-  button.textContent = "Creating…";
-
-  try {
-    const { room } = await api("/api/rooms", {
-      method: "POST",
-      body: JSON.stringify({
-        name: $("#room-name").value.trim() || `${name}'s room`,
-        isPublic: isPublic.checked,
-        passcode: $("#passcode").value || undefined,
-      }),
-    });
-    haptic(12);
-    location.href = `/r/${room.id}`;
-  } catch (err) {
-    toast(err.message === "bad_json" ? "Could not create the room" : "Something went wrong", "error");
-    button.disabled = false;
-    button.textContent = "Create room";
-  }
+  createRoom({ isPublic: isPublic.checked, passcode: $("#passcode").value }, $("#create-btn"));
 });
 
 // --- Join by code ------------------------------------------------------------
@@ -89,11 +117,16 @@ function normaliseCode(raw) {
 }
 
 // Re-insert dashes as the user types, so the field always reads like a code.
+// A pasted link is left alone: normaliseCode picks the code out of it.
+const joinSubmit = $("#join-submit");
 codeInput.addEventListener("input", () => {
-  const bare = codeInput.value.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 9);
-  const groups = bare.match(/.{1,3}/g) ?? [];
-  const formatted = groups.join("-");
-  if (formatted !== codeInput.value) codeInput.value = formatted;
+  if (!/\/r\//i.test(codeInput.value)) {
+    const bare = codeInput.value.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 9);
+    const groups = bare.match(/.{1,3}/g) ?? [];
+    const formatted = groups.join("-");
+    if (formatted !== codeInput.value) codeInput.value = formatted;
+  }
+  joinSubmit.disabled = codeInput.value.trim() === "";
 });
 
 $("#join-form").addEventListener("submit", (event) => {
@@ -137,7 +170,9 @@ function renderRooms(rooms) {
     // Showing who is already inside is most of what makes a lobby inviting.
     const who = room.peers.slice(0, 3).join(", ");
     const extra = room.peerCount > 3 ? ` +${room.peerCount - 3}` : "";
-    body.append(el("span", { class: "room__meta" }, who ? who + extra : room.id));
+    // A room named by its code has nothing new to say on the second line.
+    const fallback = room.name === room.id ? "No one here yet" : room.id;
+    body.append(el("span", { class: "room__meta" }, who ? who + extra : fallback));
 
     const count = el("span", { class: "room__count", "data-full": String(full) });
     count.append(document.createTextNode(`${room.peerCount}/${room.maxPeers}`));
@@ -189,3 +224,33 @@ if ("serviceWorker" in navigator) {
     });
   });
 }
+
+// Chromium hands us the install prompt to show at a moment of our choosing;
+// an "Install app" button in the header is that moment. Browsers without the
+// event (Safari) install through their share menu, so the button stays hidden.
+let installPrompt = null;
+const installBtn = $("#install-btn");
+
+window.addEventListener("beforeinstallprompt", (event) => {
+  event.preventDefault();
+  installPrompt = event;
+  installBtn.hidden = false;
+});
+
+installBtn.addEventListener("click", async () => {
+  if (!installPrompt) return;
+  installBtn.disabled = true;
+  try {
+    await installPrompt.prompt();
+    const { outcome } = await installPrompt.userChoice;
+    if (outcome === "accepted") toast("Installed — find TalkSpace on your home screen");
+  } finally {
+    installPrompt = null;
+    installBtn.hidden = true;
+    installBtn.disabled = false;
+  }
+});
+
+window.addEventListener("appinstalled", () => {
+  installBtn.hidden = true;
+});

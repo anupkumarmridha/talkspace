@@ -8,8 +8,9 @@
       name="viewport"
       content="width=device-width, initial-scale=1, viewport-fit=cover"
     />
-    <meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)" />
-    <meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#202124" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <meta name="color-scheme" content="dark light" />
     <meta name="description" content="Free, end-to-end encrypted group calls. No account, no download." />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -41,92 +42,133 @@
           <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" />
           <path d="m9 12 2 2 4-4" />
         </g>
-        <g id="i-plus"><path d="M12 5v14M5 12h14" /></g>
-        <g id="i-arrow"><path d="M5 12h14M13 6l6 6-6 6" /></g>
+        <g id="i-video">
+          <rect x="2" y="6" width="14" height="12" rx="2" />
+          <path d="m16 11 6-4v10l-6-4Z" />
+        </g>
+        <g id="i-keyboard">
+          <rect x="2" y="5" width="20" height="14" rx="2" />
+          <path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 13h.01M18 13h.01M9 13h6" />
+        </g>
+        <g id="i-download">
+          <path d="M12 3v12M7 10l5 5 5-5" />
+          <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+        </g>
+        <g id="i-bolt"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z" /></g>
+        <g id="i-globe">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" />
+        </g>
       </defs>
     </svg>
 
-    <main class="lobby">
-      <header class="masthead">
-        <span class="dot" aria-hidden="true"></span>
-        <h1>TalkSpace</h1>
-      </header>
+    <header class="appbar">
+      <a class="appbar__brand" href="/">
+        <span class="appbar__logo" aria-hidden="true">
+          <svg class="icon"><use href="#i-video" /></svg>
+        </span>
+        TalkSpace
+      </a>
+      <button class="btn btn--ghost u-push" id="install-btn" type="button" hidden>
+        <svg class="icon icon--md" aria-hidden="true"><use href="#i-download" /></svg>
+        Install app
+      </button>
+    </header>
 
-      <section class="card">
-        <h2>Start a room</h2>
-        <form id="create-form" class="stack" novalidate>
-          <div>
-            <label class="label" for="display-name">Your name</label>
-            <input
-              class="field"
-              id="display-name"
-              name="displayName"
-              type="text"
-              maxlength="32"
-              autocomplete="nickname"
-              enterkeyhint="next"
-              placeholder="What should people call you?"
-              required
-            />
+    <main class="home">
+      <section class="hero">
+        <div>
+          <h1>Video calls and meetings for everyone</h1>
+          <p class="hero__sub">
+            Free, end-to-end encrypted, and nothing to install. Start a call and
+            share the link.
+          </p>
+
+          <div class="home__actions">
+            <div class="home__name">
+              <label class="label" for="display-name">Your name</label>
+              <input
+                class="field"
+                id="display-name"
+                name="displayName"
+                type="text"
+                maxlength="32"
+                autocomplete="nickname"
+                enterkeyhint="next"
+                placeholder="What should people call you?"
+                required
+              />
+            </div>
+
+            <button class="btn btn--primary" type="button" id="new-meeting-btn">
+              <svg class="icon" aria-hidden="true"><use href="#i-video" /></svg>
+              New meeting
+            </button>
+
+            <form id="join-form" class="joinbar" novalidate>
+              <div class="joinbar__field">
+                <svg class="icon" aria-hidden="true"><use href="#i-keyboard" /></svg>
+                <input
+                  class="field"
+                  id="join-code"
+                  type="text"
+                  inputmode="text"
+                  autocapitalize="none"
+                  autocorrect="off"
+                  spellcheck="false"
+                  enterkeyhint="go"
+                  placeholder="Enter a code or link"
+                  aria-label="Meeting code or link"
+                />
+              </div>
+              <button class="btn btn--text" type="submit" id="join-submit" disabled>Join</button>
+            </form>
+
+            <button class="btn btn--text home__options" type="button" id="create-options-btn" aria-expanded="false" aria-controls="create-form">
+              Meeting options
+            </button>
+
+            <form id="create-form" class="create-panel stack" hidden novalidate>
+              <h2>Meeting options</h2>
+              <p class="hint">The meeting is named by its code, just like the link you share.</p>
+
+              <div class="toggle-row">
+                <span>Show in live rooms</span>
+                <input class="switch" id="is-public" type="checkbox" checked aria-label="List this room publicly" />
+              </div>
+
+              <div id="passcode-wrap" hidden>
+                <label class="label" for="passcode">Passcode (optional)</label>
+                <input
+                  class="field"
+                  id="passcode"
+                  type="password"
+                  maxlength="64"
+                  autocomplete="new-password"
+                  placeholder="Anyone with the link still needs this"
+                />
+              </div>
+
+              <div class="create-panel__actions">
+                <button class="btn btn--text" type="button" id="create-cancel">Cancel</button>
+                <button class="btn btn--primary" type="submit" id="create-btn">Start meeting</button>
+              </div>
+            </form>
           </div>
+        </div>
 
-          <div>
-            <label class="label" for="room-name">Room name</label>
-            <input
-              class="field"
-              id="room-name"
-              name="roomName"
-              type="text"
-              maxlength="60"
-              enterkeyhint="go"
-              placeholder="e.g. Evening English practice"
-            />
+        <div class="hero__art" aria-hidden="true">
+          <div class="art">
+            <div class="art__tile"><span class="avatar">al</span></div>
+            <div class="art__tile"><span class="avatar">gh</span></div>
+            <div class="art__tile"><span class="avatar">kj</span></div>
+            <div class="art__tile"><span class="avatar">mc</span></div>
           </div>
-
-          <div class="toggle-row">
-            <span>List publicly</span>
-            <input class="switch" id="is-public" type="checkbox" checked aria-label="List this room publicly" />
-          </div>
-
-          <div id="passcode-wrap" hidden>
-            <label class="label" for="passcode">Passcode (optional)</label>
-            <input
-              class="field"
-              id="passcode"
-              type="password"
-              maxlength="64"
-              autocomplete="new-password"
-              placeholder="Anyone with the link still needs this"
-            />
-          </div>
-
-          <button class="btn btn--primary btn--block" type="submit" id="create-btn">
-            Create room
-          </button>
-        </form>
+        </div>
       </section>
 
-      <section class="card">
-        <h2>Join with a code</h2>
-        <form id="join-form" class="row" novalidate>
-          <input
-            class="field"
-            id="join-code"
-            type="text"
-            inputmode="text"
-            autocapitalize="none"
-            autocorrect="off"
-            spellcheck="false"
-            enterkeyhint="go"
-            placeholder="abc-def-ghi"
-            aria-label="Room code"
-          />
-          <button class="btn btn--ghost u-auto" type="submit">Join</button>
-        </form>
-      </section>
-
-      <section class="card">
-        <h2 class="card__head">
+      <section class="section">
+        <h2>
           Live rooms
           <span id="live-dot" class="badge u-push">connecting…</span>
         </h2>
@@ -134,16 +176,38 @@
         <p class="empty" id="rooms-empty">No public rooms right now. Start one.</p>
       </section>
 
-      <section class="card">
-        <h2>How this works</h2>
-        <p class="hint">
-          Audio and video travel straight between browsers and are encrypted
-          end-to-end with DTLS-SRTP — they never pass through a server, so
-          nobody in the middle can listen. Chat goes over the same direct
-          peer-to-peer channel, and falls back to AES-GCM ciphertext the server
-          cannot read. Compare the safety number on a call to confirm nobody is
-          in the middle.
-        </p>
+      <section class="section">
+        <details>
+          <summary>
+            <svg class="icon icon--md" aria-hidden="true"><use href="#i-shield" /></svg>
+            How this works
+          </summary>
+          <div class="pillar">
+            <svg class="icon" aria-hidden="true"><use href="#i-lock" /></svg>
+            <p class="hint">
+              <strong>Private by design.</strong>
+              Audio and video travel straight between browsers, encrypted
+              end-to-end with DTLS-SRTP. They never pass through a server, so
+              nobody in the middle can listen.
+            </p>
+          </div>
+          <div class="pillar">
+            <svg class="icon" aria-hidden="true"><use href="#i-bolt" /></svg>
+            <p class="hint">
+              <strong>Nothing to install.</strong>
+              Works in any modern browser. Add it to your home screen for a
+              full-screen, app-like experience.
+            </p>
+          </div>
+          <div class="pillar">
+            <svg class="icon" aria-hidden="true"><use href="#i-globe" /></svg>
+            <p class="hint">
+              <strong>Verifiable.</strong>
+              Chat goes over the same direct peer-to-peer channel. Compare the
+              safety number on a call to confirm nobody is in the middle.
+            </p>
+          </div>
+        </details>
       </section>
     </main>
 

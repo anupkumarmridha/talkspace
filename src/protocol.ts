@@ -131,6 +131,11 @@ export interface Attachment {
   waiting?: boolean;
   /** Holder of the room's owner token. Host rights follow this, not arrival order. */
   owner?: boolean;
+  /**
+   * Set on an older socket the moment the same participant reconnects on a
+   * new one. It is no longer a seat, and its closing is not a departure.
+   */
+  superseded?: boolean;
 }
 
 export const CLOSE_ROOM_FULL = 4001;
@@ -154,6 +159,8 @@ export const ALONE_CLOSE_MS = 6 * 60 * 1000;
 export const CLOSE_ABANDONED = 4007;
 export const CLOSE_DENIED = 4008;
 export const CLOSE_KNOCK_TIMEOUT = 4009;
+/** The same participant reconnected; this older socket has been replaced. */
+export const CLOSE_SUPERSEDED = 4010;
 
 /** How long someone may wait at the door before being turned away. */
 export const KNOCK_TIMEOUT_MS = 2 * 60 * 1000;

@@ -11,7 +11,7 @@
  */
 
 // Bump on every deploy that changes a shell asset.
-const VERSION = "v1";
+const VERSION = "v2";
 const CACHE = `talkspace-shell-${VERSION}`;
 
 /**
@@ -27,6 +27,7 @@ const SHELL = [
   "/js/media.js",
   "/js/mesh.js",
   "/js/sheet.js",
+  "/js/layout.js",
   "/js/e2ee.js",
   "/js/vad.js",
   "/js/vad-worklet.js",
@@ -35,6 +36,8 @@ const SHELL = [
   "/wasm/dsp.wasm",
   "/icon.svg",
   "/icon-192.png",
+  "/icon-512.png",
+  "/icon-180.png",
   "/manifest.webmanifest",
 ];
 

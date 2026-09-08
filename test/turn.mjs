@@ -148,7 +148,7 @@ try {
   const numbers = [];
   for (const ctx of four) {
     await ctx.page.bringToFront();
-    await ctx.page.click("#safety-btn");
+    await ctx.page.evaluate(() => document.querySelector("#safety-btn").click());
     await waitFor(ctx, () => !/waiting/.test(document.getElementById("safety-code").textContent), 15000);
     numbers.push(await ctx.page.$eval("#safety-code", (n) => n.textContent.trim()));
     await ctx.page.keyboard.press("Escape");

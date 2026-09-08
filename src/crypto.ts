@@ -40,9 +40,16 @@ export async function signJoinToken(secret: string, claims: JoinClaims): Promise
   return `${body}.${b64urlEncode(new Uint8Array(sig))}`;
 }
 
+/**
+ * `graceMs` lets an *expired* token still prove identity, for one purpose:
+ * a reconnecting participant hands back the token they joined with so they
+ * can keep their peer id. The signature is what matters there, not the
+ * two-minute join window, which is only meant to stop links being replayed.
+ */
 export async function verifyJoinToken(
   secret: string,
   token: string,
+  graceMs = 0,
 ): Promise<JoinClaims | null> {
   const dot = token.indexOf(".");
   if (dot <= 0) return null;
@@ -61,7 +68,7 @@ export async function verifyJoinToken(
 
   try {
     const claims = JSON.parse(decoder.decode(raw)) as JoinClaims;
-    if (typeof claims.exp !== "number" || claims.exp < Date.now()) return null;
+    if (typeof claims.exp !== "number" || claims.exp + graceMs < Date.now()) return null;
     if (typeof claims.rid !== "string" || typeof claims.pid !== "string") return null;
     if (typeof claims.nm !== "string") return null;
     return claims;

@@ -8,9 +8,11 @@
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui"],
   "orientation": "any",
-  "background_color": "#0b0d10",
-  "theme_color": "#0b0d10",
+  "background_color": "#202124",
+  "theme_color": "#202124",
   "categories": ["social", "productivity"],
+  "prefer_related_applications": false,
+  "launch_handler": { "client_mode": "navigate-existing" },
   "icons": [
     { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" },
     { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
@@ -22,10 +24,33 @@
       "purpose": "maskable"
     }
   ],
+  "screenshots": [
+    {
+      "src": "/screenshots/phone-call.png",
+      "sizes": "780x1688",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "A call on a phone"
+    },
+    {
+      "src": "/screenshots/phone-home.png",
+      "sizes": "780x1688",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Start or join a meeting"
+    },
+    {
+      "src": "/screenshots/desktop-call.png",
+      "sizes": "1440x900",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "A call on a desktop"
+    }
+  ],
   "shortcuts": [
     {
-      "name": "Start a room",
-      "short_name": "New room",
+      "name": "New meeting",
+      "short_name": "New meeting",
       "url": "/?new=1",
       "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
     }

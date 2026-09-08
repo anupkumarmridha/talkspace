@@ -192,9 +192,9 @@ try {
 
   console.log("\n== safety number ==");
   await ada.page.bringToFront();
-  await ada.page.click("#safety-btn");
+  await ada.page.evaluate(() => document.querySelector("#safety-btn").click());
   await grace.page.bringToFront();
-  await grace.page.click("#safety-btn");
+  await grace.page.evaluate(() => document.querySelector("#safety-btn").click());
   await new Promise((r) => setTimeout(r, 1200));
   const sa = await ada.page.$eval("#safety-code", (n) => n.textContent.trim());
   const sg = await grace.page.$eval("#safety-code", (n) => n.textContent.trim());

@@ -124,7 +124,16 @@ export function preferVideoCodec(transceiver) {
 }
 
 export async function getMic() {
-  return navigator.mediaDevices.getUserMedia({ audio: MIC_CONSTRAINTS, video: false });
+  try {
+    return await navigator.mediaDevices.getUserMedia({ audio: MIC_CONSTRAINTS, video: false });
+  } catch (err) {
+    // A permission refusal is final. Anything else -- a device that cannot
+    // do 48 kHz mono, or a driver that briefly reports busy -- deserves one
+    // more try with the browser's own defaults before we tell the user
+    // there is no microphone.
+    if (err?.name === "NotAllowedError" || err?.name === "SecurityError") throw err;
+    return navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  }
 }
 
 export async function getCamera(facingMode = "user") {

@@ -11,6 +11,7 @@ import { $, $$, api, createWakeLock, el, haptic, initials, rafThrottle, shareLin
 import { Signal, reconnectOnResume } from "./signal.js";
 import { Mesh } from "./mesh.js";
 import { Sheet } from "./sheet.js";
+import { Layout, WIDE, hueFor } from "./layout.js";
 import { EventChain, createIdentity, decryptFrom, deriveSharedKey, encryptFor, safetyNumber } from "./e2ee.js";
 import { createVoiceDetector } from "./vad.js";
 import {
@@ -83,6 +84,11 @@ let wantMic = true;
 let wantCam = false;
 
 nameInput.value = store.get(NAME_KEY, "") ?? "";
+$("#preview-name").textContent = nameInput.value;
+nameInput.addEventListener("input", () => {
+  $("#preview-name").textContent = nameInput.value.trim();
+  if (!wantCam) $("#preview-initials").textContent = initials(nameInput.value || "?");
+});
 
 $("#pre-mic").addEventListener("click", () => {
   wantMic = !wantMic;
@@ -135,7 +141,9 @@ function stopStream(stream) {
 api(`/api/rooms`)
   .then(({ rooms }) => {
     const found = rooms.find((r) => r.id === roomId);
-    if (found) $("#prejoin-hint").textContent = `Joining “${found.name}”`;
+    $("#prejoin-hint").textContent = found
+      ? `${found.name} · ${found.peerCount === 0 ? "No one else is here yet" : `${found.peerCount} ${found.peerCount === 1 ? "person is" : "people are"} in this call`}`
+      : "";
   })
   .catch(() => {});
 
@@ -227,10 +235,11 @@ async function join() {
     if (state.needsApproval) $("#knocking").hidden = false;
     else $("#call").hidden = false;
     state.joined = true;
+    startClock();
     wakeLock.enable();
   } catch (err) {
     button.disabled = false;
-    button.textContent = "Join call";
+    button.textContent = "Join now";
 
     if (err.status === 403) {
       $("#prejoin-passcode-wrap").hidden = false;
@@ -312,6 +321,22 @@ function scheduleRecovery(kind) {
 
 const isDead = (track) => !track || track.readyState === "ended" || track.muted;
 
+/** Say what actually went wrong, so people can fix it rather than retry blindly. */
+function describeMicError(err, lower = false) {
+  const name = err?.name ?? "";
+  let text;
+  if (name === "NotAllowedError" || name === "SecurityError") {
+    text = "Microphone access is blocked — allow it in your browser's site settings";
+  } else if (name === "NotFoundError" || name === "OverconstrainedError") {
+    text = "No microphone was found on this device";
+  } else if (name === "NotReadableError" || name === "AbortError") {
+    text = "The microphone is in use by another app — close it and try again";
+  } else {
+    text = "Microphone unavailable — check the browser's permissions";
+  }
+  return lower ? text[0].toLowerCase() + text.slice(1) : text;
+}
+
 /**
  * Is this element actually receiving new frames?
  *
@@ -355,8 +380,8 @@ async function recoverLocalMedia(only, force = false) {
         state.local.mic.enabled = state.micEnabled;
         await state.mesh?.setLocalTrack("mic", state.local.mic);
         await restartSelfDetector();
-      } catch {
-        toast("Microphone unavailable — check it is not in use by another app", "error", 6000);
+      } catch (err) {
+        toast(describeMicError(err), "error", 6000);
       }
     }
 
@@ -465,6 +490,9 @@ function openSignal(firstToken) {
   // only valid for two minutes, so a socket URL captured at join time is
   // unusable by the time a real-world reconnect happens.
   let pending = firstToken;
+  // The most recent grant, handed back on reconnect so we keep our peer id
+  // and the others see us reconnect rather than leave and return.
+  let latest = firstToken;
 
   async function socketUrl() {
     let token = pending;
@@ -479,8 +507,10 @@ function openSignal(firstToken) {
             name: state.self?.name ?? nameInput.value.trim(),
             passcode: $("#prejoin-passcode").value || undefined,
             ownerToken: store.get(ownerKey(roomId), null) ?? undefined,
+            resume: latest,
           }),
         }));
+        latest = token;
       } catch (err) {
         // 403/409/410 mean we are no longer welcome; retrying cannot help.
         if ([403, 409, 410].includes(err.status)) {
@@ -532,8 +562,8 @@ function openSignal(firstToken) {
         state.want.mic = true;
         await state.mesh?.setLocalTrack("mic", state.local.mic);
         await restartSelfDetector();
-      } catch {
-        toast(`${e.detail.by} unmuted you, but no microphone is available`, "error", 6000);
+      } catch (err) {
+        toast(`${e.detail.by} unmuted you, but ${describeMicError(err, true)}`, "error", 6000);
         return;
       }
     }
@@ -655,16 +685,34 @@ async function onWelcome({ self, room, peers, hostId }) {
   $("#room-title").textContent = room.name;
   document.title = `${room.name} — TalkSpace`;
 
-  // Discard any peer state left over from a previous connection, so a
-  // reconnect rebuilds cleanly instead of leaking tiles and detectors.
+  // Every peer connection is rebuilt after a reconnect, but the people are
+  // mostly the same people. Keep their tiles in place -- the new video simply
+  // lands in the existing frame -- and only drop whoever actually left while
+  // we were away. Media objects tied to the old connections are released.
+  const present = new Set(peers.map((p) => p.id));
   for (const [peerId, record] of state.peers) {
     record.detector?.destroy();
     record.audio?.destroy();
-    removeTile(peerId);
+    record.detector = null;
+    record.audio = null;
+    record.screenStream = null;
+    record.screenShown = false;
+    record.fingerprint = "";
+    record.quality = null;
     removeTile(`${peerId}:screen`);
+    if (!present.has(peerId)) {
+      removeTile(peerId);
+      state.peers.delete(peerId);
+    } else {
+      const tile = tiles.get(peerId);
+      if (tile) {
+        tile.video.srcObject = null;
+        tile.spinner.hidden = false;
+      }
+    }
   }
-  state.peers.clear();
-  state.pinned = null;
+  if (state.pinned && !present.has(state.pinned.replace(/:screen$/, ""))) state.pinned = null;
+  if (state.pinned?.endsWith(":screen")) state.pinned = null;
 
   // Admission (or an ordinary join) both arrive as `welcome`.
   $("#knocking").hidden = true;
@@ -685,6 +733,10 @@ async function onWelcome({ self, room, peers, hostId }) {
 }
 
 async function onPeerJoined(peer) {
+  if (state.peers.has(peer.id)) {
+    await rejoinPeer(peer);
+    return;
+  }
   await addPeer(peer, true);
   refreshAll();
   // Re-run the video ladder: one more peer means a smaller slice of uplink.
@@ -692,8 +744,56 @@ async function onPeerJoined(peer) {
   systemMessage(`${peer.name} joined`);
 }
 
+/**
+ * Someone we already know came back on a fresh signalling socket -- a phone
+ * that changed networks, a tab that was backgrounded. They have rebuilt
+ * their side of the connection, so ours must start over too; but they never
+ * left, so their tile stays exactly where it was and nothing is announced.
+ */
+async function rejoinPeer(info) {
+  const record = state.peers.get(info.id);
+  if (!record) return;
+
+  record.info = info;
+  record.detector?.destroy();
+  record.audio?.destroy();
+  record.detector = null;
+  record.audio = null;
+  record.screenStream = null;
+  record.screenShown = false;
+  record.fingerprint = "";
+  record.quality = null;
+  removeTile(`${info.id}:screen`);
+  if (state.pinned === `${info.id}:screen`) state.pinned = null;
+
+  const tile = tiles.get(info.id);
+  if (tile) {
+    tile.video.srcObject = null;
+    tile.spinner.hidden = false;
+    updateTileChrome(info.id);
+  }
+
+  state.mesh.removePeer(info.id);
+  state.mesh.addPeer(info.id);
+  record.fingerprint = state.mesh.getFingerprint(info.id);
+
+  refreshAll();
+  void refreshSafety();
+}
+
 async function addPeer(info, isNew) {
-  if (info.id === state.self?.id || state.peers.has(info.id)) return;
+  if (info.id === state.self?.id) return;
+
+  // Already known: this is our own reconnect replaying the room. The mesh is
+  // new, so the connection is re-created; the record and the tile carry on.
+  const known = state.peers.get(info.id);
+  if (known) {
+    known.info = info;
+    state.mesh.addPeer(info.id);
+    known.fingerprint = state.mesh.getFingerprint(info.id);
+    updateTileChrome(info.id);
+    return;
+  }
 
   const record = {
     info,
@@ -964,6 +1064,21 @@ const grid = $("#grid");
 /** tileId -> { root, video, avatar, initials, label, name, spinner } */
 const tiles = new Map();
 
+const layout = new Layout({
+  stage: $("#stage"),
+  grid,
+  strip: $("#strip"),
+  topbar: $(".topbar"),
+  getTiles: () =>
+    [...tiles].map(([id, t]) => ({
+      id,
+      root: t.root,
+      self: id === "self" || id === "self:screen",
+      screen: id.endsWith(":screen"),
+    })),
+  getPinned: () => state.pinned,
+});
+
 function ensureSelfTile() {
   const tile = ensureTile("self", `${state.self.name} (you)`, { self: true });
   if (state.local.camera) {
@@ -987,24 +1102,49 @@ function ensureTile(id, name, { self = false, screen = false } = {}) {
   // Mirror your own camera (but never a screen share).
   if (self && !screen) video.dataset.mirror = "true";
 
+  // A screen share is video by definition; it never falls back to initials.
   const avatar = el("div", { class: "tile__avatar" });
+  avatar.hidden = screen;
   const initialsNode = el("div", { class: "tile__initials" }, initials(name));
+  initialsNode.style.setProperty("--hue", String(hueFor(name.replace(/ \(you\)$/, ""))));
   avatar.append(initialsNode);
 
   const label = el("div", { class: "tile__label" });
-  const micIcon = svgIcon("i-mic");
   const nameNode = el("span", {}, name);
-  label.append(micIcon, nameNode);
+  label.append(nameNode);
 
+  // Muted microphone chip, top-right, shown only while muted.
+  const micIcon = el("div", { class: "tile__muted" });
+  micIcon.append(svgIcon("i-mic-off"));
+  micIcon.hidden = true;
+
+  // The spinner means "still connecting". Your own tiles and screen shares
+  // never connect in that sense, and any tile stops spinning the moment
+  // frames arrive -- otherwise a share whose connection state is reported
+  // on its owner's camera tile would spin forever.
   const spinner = el("div", { class: "tile__spinner" });
-  spinner.hidden = self;
+  spinner.hidden = self || screen;
+  video.addEventListener("playing", () => {
+    spinner.hidden = true;
+  });
 
-  root.append(video, avatar, label, spinner);
+  // Per-tile actions (pin, and for hosts mute/remove) live behind a small
+  // menu button, so a tap on the tile itself can do what it does in every
+  // meeting app: show or hide the controls.
+  const menu = el("button", {
+    class: "tile__menu",
+    type: "button",
+    "aria-label": `Options for ${name}`,
+    onclick: (event) => {
+      event.stopPropagation();
+      openTileActions(id);
+    },
+  });
+  menu.append(svgIcon("i-more"));
 
-  // Tapping a tile opens its actions, rather than pinning outright. Pinning
-  // is one of several things you might want, and a tap that silently
-  // rearranges the whole grid is a surprising default.
-  root.addEventListener("click", () => openTileActions(id));
+  root.append(video, avatar, label, micIcon, spinner, menu);
+
+  root.addEventListener("click", (event) => onTileTap(id, root, event));
 
   grid.append(root);
   const record = { root, video, avatar, initials: initialsNode, label, name: nameNode, micIcon, spinner };
@@ -1020,6 +1160,107 @@ function removeTile(id) {
   tile.root.remove();
   tiles.delete(id);
   refreshGridCount();
+}
+
+// --- Tapping the stage --------------------------------------------------------
+//
+// One tap shows or hides the chrome; two quick taps pin or unpin the tile.
+// Dragging the floating self-view never counts as a tap.
+
+let lastTap = { id: null, at: 0 };
+
+function onTileTap(id, root, event) {
+  if (root.dataset.dragged) return;
+  const now = event.timeStamp;
+  if (lastTap.id === id && now - lastTap.at < 320) {
+    lastTap = { id: null, at: 0 };
+    state.pinned = state.pinned === id ? null : id;
+    haptic();
+    refreshAll();
+    toast(state.pinned ? "Pinned — double-tap again to unpin" : "Unpinned", "info", 1600);
+    return;
+  }
+  lastTap = { id, at: now };
+  toggleChrome();
+}
+
+$("#stage").addEventListener("click", (event) => {
+  // Clicks on tiles are handled above; this is the empty stage around them.
+  if (event.target.closest(".tile")) return;
+  toggleChrome();
+});
+
+// --- Chrome that gets out of the way ------------------------------------------
+//
+// On a phone the top bar and controls fade after a few seconds once someone
+// else is in the call, so the video has the whole screen. Any tap brings them
+// back. Desktops keep the bar: there is room for it and a mouse to reach it.
+
+const CHROME_HIDE_MS = 4500;
+let chromeTimer = null;
+const callRoot = $("#call");
+
+function chromeMayHide() {
+  return !WIDE.matches && state.peers.size > 0 && !Object.values(sheets).some((s) => s.isOpen);
+}
+
+function showChrome() {
+  callRoot.dataset.chrome = "visible";
+  scheduleChromeHide();
+}
+
+function hideChrome() {
+  if (!chromeMayHide()) return;
+  callRoot.dataset.chrome = "hidden";
+}
+
+function toggleChrome() {
+  if (callRoot.dataset.chrome === "hidden") showChrome();
+  else if (chromeMayHide()) {
+    clearTimeout(chromeTimer);
+    hideChrome();
+  }
+}
+
+function scheduleChromeHide() {
+  clearTimeout(chromeTimer);
+  if (!chromeMayHide()) return;
+  chromeTimer = setTimeout(hideChrome, CHROME_HIDE_MS);
+}
+
+// Using the controls counts as activity; so does the keyboard.
+for (const region of [$(".controls"), $(".topbar")]) {
+  region.addEventListener("pointerdown", () => showChrome(), { passive: true });
+}
+document.addEventListener("keydown", () => {
+  if (callRoot.dataset.chrome === "hidden") showChrome();
+});
+
+// --- Clock --------------------------------------------------------------------
+
+let clockTimer = null;
+
+function startClock() {
+  state.startedAt ??= Date.now();
+  clearInterval(clockTimer);
+  const tick = () => {
+    const s = Math.floor((Date.now() - state.startedAt) / 1000);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    $("#call-clock").textContent =
+      (h ? `${h}:${String(m).padStart(2, "0")}` : String(m)) + `:${String(sec).padStart(2, "0")}`;
+    $("#clock-time").textContent = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  };
+  tick();
+  clockTimer = setInterval(tick, 1000);
+}
+
+/** Coloured initials circle, the same colour for the same name everywhere. */
+function avatarFor(name) {
+  const node = el("div", { class: "avatar" }, initials(name));
+  node.style.setProperty("--hue", String(hueFor(name)));
+  return node;
 }
 
 function svgIcon(name) {
@@ -1046,66 +1287,59 @@ function openTileActions(tileId) {
   const record = isSelf ? null : state.peers.get(peerId);
   const name = isSelf ? "You" : (record?.info.name ?? "Participant");
 
-  const body = $("#tile-sheet .sheet__body");
+  const body = $("#tile-sheet .menu");
   body.textContent = "";
   $("#tile-sheet-title").textContent = name;
 
+  const item = (iconName, text, onclick, danger = false) => {
+    const button = el("button", {
+      class: `menu__item${danger ? " menu__item--danger" : ""}`,
+      type: "button",
+      onclick,
+    });
+    const icon = svgIcon(iconName);
+    icon.setAttribute("class", "icon");
+    button.append(icon, el("span", { class: "menu__label" }, text));
+    return button;
+  };
+
   const pinned = state.pinned === tileId;
   body.append(
-    el(
-      "button",
-      {
-        class: "btn btn--ghost btn--block",
-        type: "button",
-        onclick: () => {
-          state.pinned = pinned ? null : tileId;
-          haptic();
-          refreshAll();
-          sheets.tile.close();
-        },
-      },
-      pinned ? "Unpin" : "Pin to full screen",
-    ),
+    item("i-pin", pinned ? "Unpin" : "Pin to screen", () => {
+      state.pinned = pinned ? null : tileId;
+      haptic();
+      refreshAll();
+      sheets.tile.close();
+    }),
   );
 
   if (isHost() && !isSelf && record) {
     const muted = record.info.state?.mic === false;
 
     body.append(
-      el(
-        "button",
-        {
-          class: "btn btn--ghost btn--block",
-          type: "button",
-          onclick: () => {
-            state.signal.send({
-              t: "host",
-              action: muted ? "unmute" : "mute",
-              target: peerId,
-            });
-            toast(muted ? `Unmuted ${name}` : `Muted ${name}`);
-            haptic();
-            sheets.tile.close();
-          },
-        },
-        muted ? `Unmute ${name}` : `Mute ${name}`,
-      ),
+      item(muted ? "i-mic" : "i-mic-off", muted ? `Unmute ${name}` : `Mute ${name}`, () => {
+        state.signal.send({
+          t: "host",
+          action: muted ? "unmute" : "mute",
+          target: peerId,
+        });
+        toast(muted ? `Unmuted ${name}` : `Muted ${name}`);
+        haptic();
+        sheets.tile.close();
+      }),
     );
 
     body.append(
-      el(
-        "button",
-        {
-          class: "btn btn--danger btn--block",
-          type: "button",
-          onclick: () => {
-            if (!confirm(`Remove ${name} from the call?`)) return;
-            state.signal.send({ t: "host", action: "kick", target: peerId });
-            haptic(20);
-            sheets.tile.close();
-          },
+      item(
+        "i-x",
+        `Remove ${name} from the call`,
+        () => {
+          if (!confirm(`Remove ${name} from the call?`)) return;
+          state.signal.send({ t: "host", action: "kick", target: peerId });
+          haptic(20);
+          sheets.tile.close();
         },
-        `Remove ${name}`,
+        true,
       ),
     );
   }
@@ -1114,12 +1348,11 @@ function openTileActions(tileId) {
 }
 
 function refreshGridCount() {
-  grid.dataset.count = String(Math.min(8, tiles.size));
   grid.dataset.pinned = String(Boolean(state.pinned));
-
   for (const [id, tile] of tiles) {
     tile.root.classList.toggle("tile--pinned", state.pinned === id);
   }
+  layout.refresh();
 }
 
 /** Show or hide the avatar depending on whether real video is flowing. */
@@ -1134,8 +1367,7 @@ function updateTileChrome(peerId) {
   tile.name.textContent = record.info.name;
 
   const micOn = record.info.state?.mic !== false;
-  tile.micIcon.querySelector("use").setAttribute("href", micOn ? "#i-mic" : "#i-mic-off");
-  tile.micIcon.style.color = micOn ? "" : "var(--danger)";
+  tile.micIcon.hidden = micOn;
 }
 
 function updateSelfChrome() {
@@ -1147,8 +1379,7 @@ function updateSelfChrome() {
   tile.initials.textContent = initials(state.self.name);
 
   const micOn = Boolean(state.local.mic?.enabled);
-  tile.micIcon.querySelector("use").setAttribute("href", micOn ? "#i-mic" : "#i-mic-off");
-  tile.micIcon.style.color = micOn ? "" : "var(--danger)";
+  tile.micIcon.hidden = micOn;
 }
 
 /** Batched: VAD fires ~46 times a second per peer. */
@@ -1241,7 +1472,7 @@ function renderKnocks() {
 
   for (const [id, name] of waiting) {
     const row = el("div", { class: "knock" });
-    row.append(el("div", { class: "person__avatar" }, initials(name)));
+    row.append(avatarFor(name));
     row.append(el("div", { class: "u-grow knock__name" }, `${name} wants to join`));
 
     const answer = (allow) => {
@@ -1263,13 +1494,18 @@ function refreshAll() {
   refreshVideoSubscriptions();
   renderPeople();
   $("#people-count").textContent = String(state.peers.size + 1);
+  $("#people-bar-count").textContent = String(state.peers.size + 1);
+  $("#people-btn-count").textContent = String(state.peers.size + 1);
+  $("#meta-name").textContent = state.room?.name ?? "";
+  scheduleChromeHide();
+  if (!chromeMayHide()) callRoot.dataset.chrome = "visible";
 
   // Being alone is a normal state, not an error: the room stays open and the
   // code keeps working, so whoever left can come straight back.
   const alone = state.peers.size === 0;
   if (!alone) {
-    $("#waiting-title").textContent = "You are the only one here";
-    $("#waiting-sub").textContent = "Share the link to bring someone in.";
+    $("#waiting-title").textContent = "You're the only one here";
+    $("#waiting-sub").textContent = "Share this meeting link with others you want in the meeting.";
   }
   $("#waiting").hidden = !alone || state.waitingDismissed;
   if (alone) $("#waiting-code").textContent = roomId;
@@ -1317,21 +1553,21 @@ function renderPeople() {
 
   for (const row of rows) {
     const item = el("li", { class: "person" });
-    item.append(el("div", { class: "person__avatar" }, initials(row.name)));
+    item.append(avatarFor(row.name));
 
     const nameWrap = el("div", { class: "u-grow" });
     nameWrap.append(
-      el("div", { class: "person__name" }, row.isSelf ? `${row.name} (you)` : row.name),
+      el("div", { class: "person__name" }, row.isSelf ? `${row.name} (You)` : row.name),
     );
+    const bits = [];
+    if (row.id === state.hostId) bits.push("Meeting host");
     if (row.quality?.rtt != null) {
-      const bits = [`${row.quality.rtt} ms`];
+      bits.push(`${row.quality.rtt} ms`);
       if (row.quality.loss) bits.push(`${row.quality.loss}% loss`);
       if (row.quality.relayed) bits.push("relayed");
-      nameWrap.append(el("div", { class: "room__meta" }, bits.join(" · ")));
     }
+    if (bits.length) nameWrap.append(el("div", { class: "person__sub" }, bits.join(" · ")));
     item.append(nameWrap);
-
-    if (row.id === state.hostId) nameWrap.append(el("span", { class: "badge" }, "Host"));
 
     const icons = el("div", { class: "person__icons" });
     const mic = svgIcon(row.state?.mic === false ? "i-mic-off" : "i-mic");
@@ -1415,7 +1651,13 @@ $("#mic-btn").addEventListener("click", async () => {
   // switched off, and the OS can take it away mid-call. Either way the
   // button has to be able to acquire one, not just flip a flag on a track
   // that does not exist.
-  if (isDead(state.local.mic)) {
+  //
+  // Only a track that is actually gone needs a new one. A live track whose
+  // *source* is muted (the OS briefly holding the mic during a notification
+  // or app switch) must simply be re-enabled: asking the OS for a second
+  // microphone while it still holds the first is exactly what fails with
+  // "no microphone available".
+  if (!state.local.mic || state.local.mic.readyState === "ended") {
     try {
       const stream = await getMic();
       state.local.mic?.stop();
@@ -1426,11 +1668,12 @@ $("#mic-btn").addEventListener("click", async () => {
       await restartSelfDetector();
       setMicEnabled(true);
       haptic();
-    } catch {
-      toast("Microphone unavailable — check the browser's permissions", "error", 6000);
+    } catch (err) {
+      toast(describeMicError(err), "error", 6000);
     }
     return;
   }
+  state.want.mic = true;
 
   setMicEnabled(!state.local.mic.enabled);
   haptic();
@@ -1533,14 +1776,19 @@ async function stopScreenShare() {
  * toggle. Only the trailing text node is replaced here.
  */
 function setScreenButton(sharing) {
-  const button = $("#screen-btn");
-  const label = sharing ? "Stop sharing" : "Share screen";
+  $("#screen-btn-label").textContent = sharing ? "Stop presenting" : "Present screen";
+  $("#screen-btn").setAttribute("aria-pressed", String(sharing));
+  const bar = $("#screen-bar-btn");
+  bar.dataset.active = String(sharing);
+  bar.setAttribute("aria-label", sharing ? "Stop presenting" : "Present now");
+}
 
-  const text = [...button.childNodes].find((n) => n.nodeType === Node.TEXT_NODE && n.textContent.trim());
-  if (text) text.textContent = ` ${label} `;
-  else button.append(document.createTextNode(` ${label} `));
+$("#screen-bar-btn").addEventListener("click", () => $("#screen-btn").click());
 
-  button.setAttribute("aria-pressed", String(sharing));
+// Phones cannot capture their screen from a browser; do not offer it.
+if (typeof navigator.mediaDevices?.getDisplayMedia !== "function") {
+  $("#screen-btn").hidden = true;
+  $("#screen-bar-btn").hidden = true;
 }
 
 // --- Audio output ----------------------------------------------------------
@@ -1673,6 +1921,10 @@ $("#waiting-close").addEventListener("click", () => {
 });
 
 $("#share-btn").addEventListener("click", openInvite);
+$("#info-bar-btn").addEventListener("click", () => {
+  if (sheets.invite.isOpen) sheets.invite.close();
+  else openInvite();
+});
 
 $("#leave-btn").addEventListener("click", () => leave());
 
@@ -1732,40 +1984,73 @@ window.addEventListener("pagehide", (event) => {
 const scrim = $("#scrim");
 
 const sheets = {
-  chat: new Sheet($("#chat-sheet"), { scrim, onClose: () => {} }),
-  people: new Sheet($("#people-sheet"), { scrim }),
-  more: new Sheet($("#more-sheet"), { scrim }),
-  invite: new Sheet($("#invite-sheet"), { scrim }),
-  tile: new Sheet($("#tile-sheet"), { scrim }),
-  safety: new Sheet($("#safety-sheet"), { scrim }),
+  chat: new Sheet($("#chat-sheet"), { scrim, onClose: syncPanelState }),
+  people: new Sheet($("#people-sheet"), { scrim, onClose: syncPanelState }),
+  more: new Sheet($("#more-sheet"), { scrim, onClose: syncPanelState }),
+  invite: new Sheet($("#invite-sheet"), { scrim, onClose: syncPanelState }),
+  tile: new Sheet($("#tile-sheet"), { scrim, onClose: syncPanelState }),
+  safety: new Sheet($("#safety-sheet"), { scrim, onClose: syncPanelState }),
 };
+
+/**
+ * On a wide screen an open sheet is a side panel and the stage shifts over
+ * to make room, exactly as Meet does; the bar buttons light up for whichever
+ * panel is showing.
+ */
+function syncPanelState() {
+  const open = Object.values(sheets).some((s) => s.isOpen);
+  callRoot.dataset.panel = String(open);
+  $("#chat-btn").dataset.active = String(sheets.chat.isOpen);
+  $("#people-bar-btn").dataset.active = String(sheets.people.isOpen);
+  $("#info-bar-btn").dataset.active = String(sheets.invite.isOpen);
+  $("#more-btn").setAttribute("aria-expanded", String(sheets.more.isOpen));
+  if (open) {
+    clearTimeout(chromeTimer);
+    callRoot.dataset.chrome = "visible";
+  } else {
+    scheduleChromeHide();
+  }
+}
 
 function openSheet(which) {
   for (const [key, sheet] of Object.entries(sheets)) {
     if (key !== which) sheet.close();
   }
   sheets[which].open();
+  syncPanelState();
 }
 
 $("#chat-btn").addEventListener("click", () => {
+  if (sheets.chat.isOpen) return void sheets.chat.close();
   openSheet("chat");
   state.unread = 0;
   $("#chat-badge").hidden = true;
-  $("#composer-input").focus();
+  const peek = $("#chat-peek");
+  if (peek) peek.hidden = true;
+  // On a phone focusing immediately would summon the keyboard over the
+  // sheet before it has finished sliding in.
+  if (WIDE.matches) $("#composer-input").focus();
 });
 
 $("#more-btn").addEventListener("click", () => {
   // Host-only actions are revealed here, and re-checked server-side anyway.
+  if (sheets.more.isOpen) return void sheets.more.close();
   const host = isHost();
   $("#end-btn").hidden = !host;
   $("#mute-all-btn").hidden = !host || state.peers.size === 0;
+  $("#host-divider").hidden = !host;
   $("#people-btn-count").textContent = String(state.peers.size + 1);
 
   void refreshOutputDevices();
   openSheet("more");
 });
 $("#safety-btn").addEventListener("click", () => openSheet("safety"));
+$("#safety-menu-btn").addEventListener("click", () => openSheet("safety"));
 $("#people-btn").addEventListener("click", () => openSheet("people"));
+$("#people-bar-btn").addEventListener("click", () => {
+  if (sheets.people.isOpen) sheets.people.close();
+  else openSheet("people");
+});
 
 for (const button of $$("[data-close-sheet]")) {
   button.addEventListener("click", () => Object.values(sheets).forEach((s) => s.close()));
@@ -1778,10 +2063,14 @@ for (const button of $$("[data-close-sheet]")) {
 const composer = $("#composer");
 const composerInput = $("#composer-input");
 
-// Grow the textarea with its content, up to the CSS max-height.
+// Grow the textarea with its content, up to the CSS max-height, and only
+// offer Send once there is something to send.
+const sendButton = composer.querySelector(".send");
+sendButton.disabled = true;
 composerInput.addEventListener("input", () => {
   composerInput.style.height = "auto";
   composerInput.style.height = `${Math.min(120, composerInput.scrollHeight)}px`;
+  sendButton.disabled = composerInput.value.trim() === "";
 });
 
 // Enter sends on a physical keyboard; Shift+Enter is a newline. On a phone
@@ -1800,6 +2089,7 @@ composer.addEventListener("submit", async (event) => {
 
   composerInput.value = "";
   composerInput.style.height = "auto";
+  sendButton.disabled = true;
 
   await sendChat(text);
   haptic();
@@ -1897,23 +2187,98 @@ function receiveChat(name, text, ts) {
     const badge = $("#chat-badge");
     badge.textContent = String(Math.min(99, state.unread));
     badge.hidden = false;
+    peekMessage(name, text);
+    showChrome();
     haptic(12);
   }
 }
 
 const msgs = $("#msgs");
 
-function renderMessage({ mine, name, text }) {
-  const bubble = el("div", { class: `msg${mine ? " msg--mine" : ""}` });
-  if (!mine) bubble.append(el("span", { class: "msg__who" }, name));
-  // textContent, never innerHTML: chat is attacker-controlled by definition.
-  bubble.append(document.createTextNode(text));
-  msgs.append(bubble);
+/** Consecutive messages from one person within this window share a header. */
+const GROUP_WINDOW_MS = 2 * 60 * 1000;
+let lastMessage = null;
+
+function renderMessage({ mine, name, text, ts }) {
+  const when = ts ?? Date.now();
+  const who = mine ? "You" : name;
+  const grouped = lastMessage && lastMessage.who === who && when - lastMessage.ts < GROUP_WINDOW_MS;
+
+  const row = el("div", { class: `msg${mine ? " msg--mine" : ""}${grouped ? " msg--grouped" : ""}` });
+  if (!grouped) {
+    const meta = el("div", { class: "msg__meta" });
+    meta.append(el("span", { class: "msg__who" }, who));
+    meta.append(el("span", { class: "msg__time" }, formatTime(when)));
+    row.append(meta);
+  }
+  row.append(linkify(text));
+  msgs.append(row);
+  lastMessage = { who, ts: when };
   scrollChatToEnd();
+}
+
+function formatTime(ts) {
+  return new Date(ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+/**
+ * Turn http(s) URLs in a message into links, and nothing else.
+ *
+ * Everything is built with textContent and createElement -- never innerHTML --
+ * because chat is attacker-controlled by definition. Only a URL that parses
+ * with an http or https scheme becomes an anchor; anything else stays text.
+ */
+function linkify(text) {
+  const node = el("div", { class: "msg__text" });
+  const parts = String(text).split(/(https?:\/\/[^\s<>"']+)/g);
+  for (const part of parts) {
+    if (!part) continue;
+    let url = null;
+    try {
+      const candidate = new URL(part);
+      if (candidate.protocol === "http:" || candidate.protocol === "https:") url = candidate.href;
+    } catch {
+      /* plain text */
+    }
+    if (url) {
+      node.append(el("a", { href: url, target: "_blank", rel: "noopener noreferrer" }, part));
+    } else {
+      node.append(document.createTextNode(part));
+    }
+  }
+  return node;
+}
+
+// --- New-message preview -----------------------------------------------------
+//
+// When chat is closed a message shows briefly above the controls, the way
+// Meet surfaces it, and tapping the preview opens the conversation.
+
+let peekTimer = null;
+
+function peekMessage(name, text) {
+  let peek = $("#chat-peek");
+  if (!peek) {
+    peek = el("button", { class: "peek", id: "chat-peek", type: "button", "aria-live": "polite" });
+    peek.append(el("span", { class: "peek__who" }), el("span", { class: "peek__text" }));
+    peek.addEventListener("click", () => {
+      peek.hidden = true;
+      $("#chat-btn").click();
+    });
+    $("#call").append(peek);
+  }
+  peek.querySelector(".peek__who").textContent = name;
+  peek.querySelector(".peek__text").textContent = text;
+  peek.hidden = false;
+  clearTimeout(peekTimer);
+  peekTimer = setTimeout(() => {
+    peek.hidden = true;
+  }, 4500);
 }
 
 function systemMessage(text) {
   msgs.append(el("div", { class: "msg msg--system" }, text));
+  lastMessage = null;
   scrollChatToEnd();
 }
 
@@ -1958,4 +2323,19 @@ async function refreshSafety() {
   $("#safety-emoji").textContent = state.peers.size ? emoji : "· · · · ·";
   $("#safety-code").textContent = state.peers.size ? digits : "waiting for peers";
   $("#chain-head").textContent = `event log ${state.chain.shortHead}`;
+}
+
+// ============================================================================
+// Installability
+// ============================================================================
+
+// Most people meet the app through an invite link, so this page -- not the
+// lobby -- is where the service worker usually gets its first chance to
+// install. Without it the app could never be added to a home screen.
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {
+      /* not fatal: the call works fine uninstalled */
+    });
+  });
 }

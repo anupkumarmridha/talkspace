@@ -73,6 +73,7 @@ export class Signal extends EventTarget {
     });
 
     ws.addEventListener("message", (event) => {
+      if (this.#ws !== ws) return; // a replaced socket has nothing to say
       // The server answers keepalives with a bare "pong" via the Durable
       // Object's auto-response, which never wakes its JS. Not a real frame.
       if (event.data === "pong") return;
@@ -88,6 +89,9 @@ export class Signal extends EventTarget {
     });
 
     ws.addEventListener("close", (event) => {
+      // Once we have moved on to a new socket, the old one closing -- which
+      // the server does deliberately when we reconnect -- is not news.
+      if (this.#ws !== ws) return;
       this.#stopPing();
       this.#emit("close", { code: event.code, reason: event.reason });
 

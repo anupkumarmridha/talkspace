@@ -157,7 +157,8 @@ async function createRoom(request: Request, env: Env): Promise<Response> {
   const meta = await env.SIGNAL_ROOM.getByName(id).ensure(
     id,
     {
-      name: cleanText(body.name, LIMITS.roomNameChars) || "Untitled room",
+      // Rooms are known by their code unless someone names them, as in Meet.
+      name: cleanText(body.name, LIMITS.roomNameChars) || id,
       topic: cleanText(body.topic, LIMITS.topicChars),
       lang: cleanText(body.lang, 16),
       maxPeers: Math.min(maxAllowed, Number(body.maxPeers) || maxAllowed),
@@ -210,11 +211,27 @@ async function issueJoinToken(request: Request, env: Env): Promise<Response> {
     if (!ok) return json({ error: "bad_passcode" }, 403);
   }
 
-  if ((await room.occupancy()) >= meta.maxPeers) {
-    return json({ error: "room_full", maxPeers: meta.maxPeers }, 409);
+  const secret = await getSigningSecret(env);
+
+  // A reconnect keeps its seat. The client hands back the token it last
+  // joined with; a valid signature for this room means the same participant
+  // is coming back, so they keep their peer id and everyone else sees one
+  // person reconnect rather than a stranger arrive while a ghost lingers.
+  // The room-full check is skipped for them because their own seat is the
+  // one that is still counted.
+  let pid = randomId(9);
+  let resuming = false;
+  if (typeof body.resume === "string") {
+    const previous = await verifyJoinToken(secret, body.resume, ROOM_TTL_MS);
+    if (previous && previous.rid === roomId) {
+      pid = previous.pid;
+      resuming = true;
+    }
   }
 
-  const secret = await getSigningSecret(env);
+  if (!resuming && (await room.occupancy()) >= meta.maxPeers) {
+    return json({ error: "room_full", maxPeers: meta.maxPeers }, 409);
+  }
 
   // Ownership is proven by a token the client keeps, so a reload or a rejoin
   // restores host rights to the same person rather than handing them to
@@ -235,7 +252,7 @@ async function issueJoinToken(request: Request, env: Env): Promise<Response> {
 
   const token = await signJoinToken(secret, {
     rid: roomId,
-    pid: randomId(9),
+    pid,
     nm: name,
     exp: Date.now() + 120_000,
     own: isOwner,

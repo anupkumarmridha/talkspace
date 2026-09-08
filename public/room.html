@@ -1,12 +1,13 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="page-room">
   <head>
     <meta charset="utf-8" />
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no, interactive-widget=resizes-content"
     />
-    <meta name="theme-color" content="#0b0d10" />
+    <meta name="theme-color" content="#202124" />
+    <meta name="color-scheme" content="dark" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -20,6 +21,8 @@
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon-180.png" />
     <link rel="stylesheet" href="/css/app.css" />
+    <link rel="modulepreload" href="/js/util.js" />
+    <link rel="modulepreload" href="/js/layout.js" />
   </head>
 
   <body>
@@ -77,8 +80,12 @@
           <path d="M12 16V3M8 7l4-4 4 4" />
           <path d="M4 14v5a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5" />
         </g>
+        <g id="i-link">
+          <path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1.5 1.5" />
+          <path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.5-1.5" />
+        </g>
         <g id="i-x"><path d="M18 6 6 18M6 6l12 12" /></g>
-        <g id="i-more"><circle cx="5" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="19" cy="12" r="1.6" /></g>
+        <g id="i-more"><circle cx="12" cy="5" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="12" cy="19" r="1.6" /></g>
         <g id="i-volume">
           <path d="M11 5 6 9H2v6h4l5 4V5Z" />
           <path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13" />
@@ -99,59 +106,85 @@
           <rect x="9" y="9" width="12" height="12" rx="2" />
           <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
         </g>
+        <g id="i-pin">
+          <path d="M9 3h6l-1 7 3 3v1H7v-1l3-3-1-7ZM12 14v7" />
+        </g>
+        <g id="i-info">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 11v5M12 8h.01" />
+        </g>
+        <g id="i-back"><path d="M19 12H5M11 6l-6 6 6 6" /></g>
+        <g id="i-video">
+          <rect x="2" y="6" width="14" height="12" rx="2" />
+          <path d="m16 11 6-4v10l-6-4Z" />
+        </g>
+        <g id="i-logout">
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" />
+        </g>
       </defs>
     </svg>
 
-    <!-- ===================== Pre-join ===================== -->
+    <!-- ===================== Pre-join (green room) ===================== -->
     <!-- Nobody should be dropped into a live call with their camera already
          on. This screen also collects the mic/camera permission from a real
          user gesture, which browsers require. -->
     <section class="prejoin" id="prejoin">
-      <div class="prejoin__preview">
-        <video id="preview" autoplay playsinline muted></video>
-        <div class="tile__avatar" id="preview-avatar" hidden>
-          <div class="tile__initials" id="preview-initials">?</div>
-        </div>
-      </div>
+      <div class="prejoin__inner">
+        <a class="prejoin__brand" href="/">
+          <svg class="icon icon--md" aria-hidden="true"><use href="#i-back" /></svg>
+          TalkSpace
+        </a>
 
-      <div class="prejoin__form stack">
-        <div class="u-row-center">
-          <button class="ctrl" id="pre-mic" type="button" data-on="true" aria-pressed="true" aria-label="Microphone">
-            <svg class="icon" aria-hidden="true"><use href="#i-mic" /></svg>
-          </button>
-          <button class="ctrl" id="pre-cam" type="button" data-on="false" aria-pressed="false" aria-label="Camera">
-            <svg class="icon" aria-hidden="true"><use href="#i-cam-off" /></svg>
-          </button>
-        </div>
-
-        <div>
-          <label class="label" for="prejoin-name">Your name</label>
-          <input
-            class="field"
-            id="prejoin-name"
-            type="text"
-            maxlength="32"
-            autocomplete="nickname"
-            enterkeyhint="go"
-            placeholder="What should people call you?"
-          />
+        <div class="prejoin__stage">
+          <div class="prejoin__preview">
+            <video id="preview" autoplay playsinline muted></video>
+            <div class="tile__avatar" id="preview-avatar" hidden>
+              <div class="tile__initials" id="preview-initials">?</div>
+            </div>
+            <span class="prejoin__name" id="preview-name"></span>
+            <div class="prejoin__controls">
+              <button class="ctrl" id="pre-mic" type="button" data-on="true" aria-pressed="true" aria-label="Microphone">
+                <svg class="icon" aria-hidden="true"><use href="#i-mic" /></svg>
+              </button>
+              <button class="ctrl" id="pre-cam" type="button" data-on="false" aria-pressed="false" aria-label="Camera">
+                <svg class="icon" aria-hidden="true"><use href="#i-cam-off" /></svg>
+              </button>
+            </div>
+          </div>
         </div>
 
-        <div id="prejoin-passcode-wrap" hidden>
-          <label class="label" for="prejoin-passcode">Room passcode</label>
-          <input class="field" id="prejoin-passcode" type="password" maxlength="64" autocomplete="current-password" />
-        </div>
+        <div class="prejoin__form">
+          <h1 class="prejoin__title">Ready to join?</h1>
+          <p class="hint" id="prejoin-hint"></p>
 
-        <button class="btn btn--primary btn--block" id="join-btn" type="button">Join call</button>
-        <p class="hint u-center" id="prejoin-hint"></p>
+          <div class="prejoin__field">
+            <label class="label" for="prejoin-name">Your name</label>
+            <input
+              class="field"
+              id="prejoin-name"
+              type="text"
+              maxlength="32"
+              autocomplete="nickname"
+              enterkeyhint="go"
+              placeholder="What should people call you?"
+            />
+          </div>
+
+          <div class="prejoin__field" id="prejoin-passcode-wrap" hidden>
+            <label class="label" for="prejoin-passcode">Room passcode</label>
+            <input class="field" id="prejoin-passcode" type="password" maxlength="64" autocomplete="current-password" />
+          </div>
+
+          <button class="btn btn--primary btn--block" id="join-btn" type="button">Join now</button>
+        </div>
       </div>
     </section>
 
     <!-- ===================== Waiting to be let in ===================== -->
     <section class="prejoin" id="knocking" hidden>
-      <div class="prejoin__form stack u-center">
+      <div class="prejoin__inner stack">
         <div class="knock__spinner" aria-hidden="true"></div>
-        <p class="waiting__title">Asking to be let in…</p>
+        <p class="prejoin__title">Asking to be let in…</p>
         <p class="hint">
           <span id="knocking-room">This room</span> is private. Someone inside
           has to admit you.
@@ -161,15 +194,16 @@
     </section>
 
     <!-- ===================== Call ===================== -->
-    <div class="call" id="call" hidden>
+    <div class="call" id="call" hidden data-chrome="visible" data-panel="false">
       <header class="topbar">
         <div class="topbar__title">
           <span class="topbar__name" id="room-title">Room</span>
           <span class="topbar__sub">
             <span class="badge badge--secure" id="secure-badge">
               <svg class="icon icon--xs" aria-hidden="true"><use href="#i-lock" /></svg>
-              E2E encrypted
+              Encrypted
             </span>
+            <span id="call-clock">0:00</span>
             <span id="conn-status"></span>
           </span>
         </div>
@@ -183,7 +217,10 @@
 
       <div class="knocks" id="knocks" hidden aria-live="polite"></div>
 
-      <div class="grid" id="grid" data-count="1"></div>
+      <div class="stage" id="stage" data-mode="grid" data-fit="cover">
+        <div class="grid" id="grid" data-count="1"></div>
+        <div class="strip" id="strip" hidden></div>
+      </div>
 
       <!-- Shown whenever you are alone. The room itself stays open: the code
            remains valid and whoever left can walk straight back in. -->
@@ -192,70 +229,97 @@
           <button class="iconbtn iconbtn--sm waiting__close" id="waiting-close" type="button" aria-label="Dismiss">
             <svg class="icon" aria-hidden="true"><use href="#i-x" /></svg>
           </button>
-          <p class="waiting__title" id="waiting-title">You are the only one here</p>
-          <p class="hint" id="waiting-sub">Share the link to bring someone in.</p>
+          <p class="waiting__title" id="waiting-title">You're the only one here</p>
+          <p class="hint" id="waiting-sub">Share this meeting link with others you want in the meeting.</p>
           <button class="btn btn--primary" id="waiting-share" type="button">
             <svg class="icon" aria-hidden="true"><use href="#i-share" /></svg>
-            Share invite link
+            Share invite
           </button>
           <p class="waiting__code" id="waiting-code"></p>
         </div>
       </div>
 
       <nav class="controls" aria-label="Call controls">
-        <button class="ctrl" id="mic-btn" type="button" data-on="true" aria-pressed="true" aria-label="Mute microphone">
-          <svg class="icon" aria-hidden="true"><use href="#i-mic" /></svg>
-        </button>
-        <button class="ctrl" id="cam-btn" type="button" data-on="false" aria-pressed="false" aria-label="Turn on camera">
-          <svg class="icon" aria-hidden="true"><use href="#i-cam-off" /></svg>
-        </button>
-        <button class="ctrl ctrl--leave" id="leave-btn" type="button" aria-label="Leave call">
-          <svg class="icon" aria-hidden="true"><use href="#i-hangup" /></svg>
-        </button>
-        <button class="ctrl u-relative" id="chat-btn" type="button" aria-label="Chat">
-          <svg class="icon" aria-hidden="true"><use href="#i-chat" /></svg>
-          <span class="ctrl__badge" id="chat-badge" hidden>0</span>
-        </button>
-        <button class="ctrl" id="more-btn" type="button" aria-label="More options">
-          <svg class="icon" aria-hidden="true"><use href="#i-more" /></svg>
-        </button>
+        <div class="controls__meta">
+          <span id="clock-time">--:--</span>
+          <span class="sep" aria-hidden="true"></span>
+          <span class="meta__name" id="meta-name"></span>
+        </div>
+
+        <div class="controls__main">
+          <button class="ctrl" id="mic-btn" type="button" data-on="true" aria-pressed="true" aria-label="Mute microphone">
+            <svg class="icon" aria-hidden="true"><use href="#i-mic" /></svg>
+          </button>
+          <button class="ctrl" id="cam-btn" type="button" data-on="false" aria-pressed="false" aria-label="Turn on camera">
+            <svg class="icon" aria-hidden="true"><use href="#i-cam-off" /></svg>
+          </button>
+          <button class="ctrl ctrl--wide" id="screen-bar-btn" type="button" aria-label="Present now">
+            <svg class="icon" aria-hidden="true"><use href="#i-screen" /></svg>
+          </button>
+          <button class="ctrl" id="more-btn" type="button" aria-label="More options" aria-haspopup="true">
+            <svg class="icon" aria-hidden="true"><use href="#i-more" /></svg>
+          </button>
+          <button class="ctrl ctrl--leave" id="leave-btn" type="button" aria-label="Leave call">
+            <svg class="icon" aria-hidden="true"><use href="#i-hangup" /></svg>
+          </button>
+        </div>
+
+        <div class="controls__side">
+          <button class="ctrl ctrl--wide" id="info-bar-btn" type="button" aria-label="Meeting details">
+            <svg class="icon" aria-hidden="true"><use href="#i-info" /></svg>
+          </button>
+          <button class="ctrl ctrl--wide" id="people-bar-btn" type="button" aria-label="Participants">
+            <svg class="icon" aria-hidden="true"><use href="#i-users" /></svg>
+            <span class="ctrl__badge" id="people-bar-count">1</span>
+          </button>
+          <button class="ctrl" id="chat-btn" type="button" aria-label="Chat">
+            <svg class="icon" aria-hidden="true"><use href="#i-chat" /></svg>
+            <span class="ctrl__badge" id="chat-badge" hidden>0</span>
+          </button>
+        </div>
       </nav>
     </div>
 
     <!-- ===================== Sheets ===================== -->
     <div class="sheet__scrim" id="scrim" data-open="false"></div>
 
-    <section class="sheet" id="chat-sheet" data-open="false" inert aria-label="Chat">
+    <section class="sheet" id="chat-sheet" data-open="false" inert aria-label="In-call messages">
       <div class="sheet__grip" aria-hidden="true"></div>
       <div class="sheet__head">
-        <h2>Chat</h2>
+        <h2>In-call messages</h2>
         <span class="badge badge--secure" id="chat-transport">peer-to-peer</span>
         <button class="iconbtn iconbtn--sm" data-close-sheet type="button" aria-label="Close chat">
           <svg class="icon" aria-hidden="true"><use href="#i-x" /></svg>
         </button>
       </div>
       <div class="sheet__body">
+        <p class="chat__notice">
+          Messages are end-to-end encrypted and only visible to people in the
+          call. They disappear when the call ends.
+        </p>
         <div class="msgs" id="msgs"></div>
       </div>
       <form class="composer" id="composer">
-        <textarea
-          id="composer-input"
-          rows="1"
-          maxlength="2000"
-          placeholder="Message"
-          enterkeyhint="send"
-          aria-label="Message"
-        ></textarea>
-        <button class="send" type="submit" aria-label="Send">
-          <svg class="icon" aria-hidden="true"><use href="#i-send" /></svg>
-        </button>
+        <div class="composer__box">
+          <textarea
+            id="composer-input"
+            rows="1"
+            maxlength="2000"
+            placeholder="Send a message"
+            enterkeyhint="send"
+            aria-label="Message"
+          ></textarea>
+          <button class="send" type="submit" aria-label="Send">
+            <svg class="icon" aria-hidden="true"><use href="#i-send" /></svg>
+          </button>
+        </div>
       </form>
     </section>
 
-    <section class="sheet" id="people-sheet" data-open="false" inert aria-label="Participants">
+    <section class="sheet" id="people-sheet" data-open="false" inert aria-label="People">
       <div class="sheet__grip" aria-hidden="true"></div>
       <div class="sheet__head">
-        <h2>In this room</h2>
+        <h2>People</h2>
         <span class="badge" id="people-count">1</span>
         <button class="iconbtn iconbtn--sm" data-close-sheet type="button" aria-label="Close">
           <svg class="icon" aria-hidden="true"><use href="#i-x" /></svg>
@@ -267,35 +331,39 @@
       </div>
     </section>
 
-    <section class="sheet" id="more-sheet" data-open="false" inert aria-label="Options">
+    <section class="sheet" id="more-sheet" data-open="false" inert aria-label="More options">
       <div class="sheet__grip" aria-hidden="true"></div>
       <div class="sheet__head">
-        <h2>Options</h2>
+        <h2>More options</h2>
         <button class="iconbtn iconbtn--sm" data-close-sheet type="button" aria-label="Close">
           <svg class="icon" aria-hidden="true"><use href="#i-x" /></svg>
         </button>
       </div>
-      <div class="sheet__body stack">
-        <button class="btn btn--ghost btn--block" id="invite-btn" type="button">
-          <svg class="icon" aria-hidden="true"><use href="#i-share" /></svg>
-          Invite people
-        </button>
-        <button class="btn btn--ghost btn--block" id="people-btn" type="button">
-          <svg class="icon" aria-hidden="true"><use href="#i-users" /></svg>
-          Participants
-          <span class="badge u-push" id="people-btn-count">1</span>
-        </button>
-        <button class="btn btn--ghost btn--block" id="screen-btn" type="button">
-          <svg class="icon" aria-hidden="true"><use href="#i-screen" /></svg>
-          Share screen
-        </button>
-        <button class="btn btn--ghost btn--block" id="flip-btn" type="button" hidden>
-          <svg class="icon" aria-hidden="true"><use href="#i-flip" /></svg>
-          Flip camera
-        </button>
+      <div class="sheet__body">
+        <div class="menu">
+          <button class="menu__item" id="invite-btn" type="button">
+            <svg class="icon" aria-hidden="true"><use href="#i-share" /></svg>
+            <span class="menu__label">Add people</span>
+          </button>
+          <button class="menu__item" id="people-btn" type="button">
+            <svg class="icon" aria-hidden="true"><use href="#i-users" /></svg>
+            <span class="menu__label">People</span>
+            <span class="badge" id="people-btn-count">1</span>
+          </button>
+          <button class="menu__item" id="screen-btn" type="button">
+            <svg class="icon" aria-hidden="true"><use href="#i-screen" /></svg>
+            <span class="menu__label" id="screen-btn-label">Share screen</span>
+          </button>
+          <button class="menu__item" id="flip-btn" type="button" hidden>
+            <svg class="icon" aria-hidden="true"><use href="#i-flip" /></svg>
+            <span class="menu__label">Switch camera</span>
+          </button>
+          <button class="menu__item" id="safety-menu-btn" type="button">
+            <svg class="icon" aria-hidden="true"><use href="#i-shield" /></svg>
+            <span class="menu__label">Verify encryption</span>
+          </button>
 
-        <div>
-          <span class="label">Audio output</span>
+          <div class="menu__section">Audio output</div>
           <div class="segmented" id="output-modes" role="group" aria-label="Audio output">
             <button class="segment" type="button" data-mode="loud" aria-pressed="true">
               <svg class="icon icon--md" aria-hidden="true"><use href="#i-volume" /></svg>
@@ -303,28 +371,30 @@
             </button>
             <button class="segment" type="button" data-mode="call" aria-pressed="false">
               <svg class="icon icon--md" aria-hidden="true"><use href="#i-phone" /></svg>
-              Call
+              Earpiece
             </button>
             <button class="segment" type="button" data-mode="off" aria-pressed="false">
               <svg class="icon icon--md" aria-hidden="true"><use href="#i-volume-off" /></svg>
               Off
             </button>
           </div>
-        </div>
 
-        <div id="output-device-wrap" hidden>
-          <label class="label" for="output-device">Play sound through</label>
-          <select class="field" id="output-device"></select>
-        </div>
-        <p class="hint" id="output-hint"></p>
+          <div id="output-device-wrap" hidden>
+            <label class="label" for="output-device">Play sound through</label>
+            <select class="field" id="output-device"></select>
+          </div>
+          <p class="hint" id="output-hint"></p>
 
-        <button class="btn btn--ghost btn--block" id="mute-all-btn" type="button" hidden>
-          <svg class="icon" aria-hidden="true"><use href="#i-mic-off" /></svg>
-          Mute everyone
-        </button>
-        <button class="btn btn--danger btn--block" id="end-btn" type="button" hidden>
-          End meeting for everyone
-        </button>
+          <div class="menu__divider" id="host-divider" hidden></div>
+          <button class="menu__item" id="mute-all-btn" type="button" hidden>
+            <svg class="icon" aria-hidden="true"><use href="#i-mic-off" /></svg>
+            <span class="menu__label">Mute everyone</span>
+          </button>
+          <button class="menu__item menu__item--danger" id="end-btn" type="button" hidden>
+            <svg class="icon" aria-hidden="true"><use href="#i-logout" /></svg>
+            <span class="menu__label">End call for everyone</span>
+          </button>
+        </div>
       </div>
     </section>
 
@@ -336,24 +406,24 @@
           <svg class="icon" aria-hidden="true"><use href="#i-x" /></svg>
         </button>
       </div>
-      <div class="sheet__body stack"></div>
+      <div class="sheet__body"><div class="menu"></div></div>
     </section>
 
-    <section class="sheet" id="invite-sheet" data-open="false" inert aria-label="Invite people">
+    <section class="sheet" id="invite-sheet" data-open="false" inert aria-label="Add people">
       <div class="sheet__grip" aria-hidden="true"></div>
       <div class="sheet__head">
-        <h2>Invite people</h2>
+        <h2>Add people</h2>
         <button class="iconbtn iconbtn--sm" data-close-sheet type="button" aria-label="Close">
           <svg class="icon" aria-hidden="true"><use href="#i-x" /></svg>
         </button>
       </div>
       <div class="sheet__body stack">
         <div>
-          <span class="label">Room code</span>
+          <span class="label">Meeting code</span>
           <p class="invite__code" id="invite-code">···-···-···</p>
         </div>
         <div>
-          <span class="label">Link</span>
+          <span class="label">Joining info</span>
           <p class="invite__link" id="invite-link"></p>
         </div>
         <button class="btn btn--primary btn--block" id="invite-share" type="button">

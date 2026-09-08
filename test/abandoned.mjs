@@ -9,7 +9,8 @@
 import { spawn } from "node:child_process";
 import http from "node:http";
 
-const PORT = 8788;
+// Overridable so the suite can run next to another local Worker.
+const PORT = Number(process.env.ABANDONED_PORT ?? 8788);
 const B = `http://localhost:${PORT}`;
 const WS = `ws://localhost:${PORT}`;
 

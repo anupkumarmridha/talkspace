@@ -208,6 +208,14 @@ Recovery deliberately waits until the page is visible again: a camera cannot be
 acquired while backgrounded, so attempting it at the moment of loss would only
 fail.
 
+**The signalling socket drops.** Walking between cells or handing off from
+Wi-Fi to LTE kills the WebSocket while the peer connections, which have their
+own ICE path, carry on. A reconnect hands back the token it last joined with,
+so the Worker re-issues the *same* peer id; the Durable Object retires the old
+socket silently instead of announcing a departure, and everyone else resets just
+that one connection while the person's tile stays put. Without this, every blip
+looked like a stranger arriving beside a frozen ghost of the person who left.
+
 **Abandoned sessions** are reaped. Someone left alone is warned after 5 minutes
 and disconnected a minute later, so a forgotten tab does not hold a microphone
 open and tick over Durable Object requests all day. The room itself survives —
@@ -271,6 +279,27 @@ expect Chrome at `/Applications/Google Chrome.app` — edit `CHROME` in
 ---
 
 ## Deploying
+
+### From GitHub
+
+`.github/workflows/deploy.yml` typechecks and runs the server-side suites on
+every push and pull request, and deploys `main` to Cloudflare when they pass.
+It needs two repository secrets:
+
+- `CLOUDFLARE_API_TOKEN` — create one at
+  https://dash.cloudflare.com/profile/api-tokens with the *Edit Cloudflare
+  Workers* template.
+- `CLOUDFLARE_ACCOUNT_ID` — shown in the right-hand column of the Workers &
+  Pages overview.
+
+Set them with the GitHub CLI so they never touch a chat or a shell history:
+
+```
+gh secret set CLOUDFLARE_API_TOKEN
+gh secret set CLOUDFLARE_ACCOUNT_ID
+```
+
+### By hand
 
 ```bash
 npx wrangler login
@@ -353,7 +382,8 @@ public/
   js/media.js     Capture, Opus/video tuning, remote playback
   js/vad.js       Voice detection façade
   js/vad-worklet.js  Audio-thread processor hosting the WASM
-  js/sheet.js     Draggable bottom sheet
+  js/sheet.js     Draggable bottom sheet / desktop side panel
+  js/layout.js    Stage layout: aspect-fit grid, floating self-view, spotlight + filmstrip
   js/room.js      Call orchestration
   js/lobby.js     Lobby
 
