@@ -98,11 +98,14 @@ jobs:
           echo "$verify" | jq -e '.success == true and .result.status == "active"' > /dev/null \
             || { echo "::error::The API token is not valid. Create one with the 'Edit Cloudflare Workers' template and re-run 'gh secret set CLOUDFLARE_API_TOKEN'."; exit 1; }
 
-          accounts=$(curl -s "https://api.cloudflare.com/client/v4/accounts?per_page=50" \
+          # The same call `wrangler deploy` makes first: needs Workers Scripts
+          # on this account, and proves the account id belongs to the token.
+          scripts=$(curl -s -o /dev/null -w "%{http_code}" \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts" \
             -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}")
-          echo "accounts visible to token: $(echo "$accounts" | jq -c '{success, count: (.result | length), names: [.result[].name], errors}')"
-          echo "$accounts" | jq -e --arg id "$CLOUDFLARE_ACCOUNT_ID" '.result[] | select(.id == $id)' > /dev/null \
-            || { echo "::error::CLOUDFLARE_ACCOUNT_ID is not an account this token can see. Copy the Account ID from the Workers & Pages overview (not a Zone ID) and re-run 'gh secret set CLOUDFLARE_ACCOUNT_ID'."; exit 1; }
+          echo "workers scripts on account: HTTP $scripts"
+          [ "$scripts" = "200" ] \
+            || { echo "::error::The token cannot manage Workers on CLOUDFLARE_ACCOUNT_ID (HTTP $scripts). Check the account id is this account's (Workers & Pages overview, right-hand column) and that the token has Account · Workers Scripts · Edit."; exit 1; }
           echo "credentials look good"
 
       - name: Deploy
