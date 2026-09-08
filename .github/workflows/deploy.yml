@@ -1,0 +1,90 @@
+# Continuous integration and deployment.
+#
+# Every push and pull request is typechecked and run against the server-side
+# test suites on a local Worker (miniflare). A push to main that passes is
+# deployed to Cloudflare with Wrangler.
+#
+# The browser suites (mesh, resilience, TURN) need a real Chrome with fake
+# media devices and are run locally with `npm test`; they are not part of CI.
+#
+# Secrets required on the repository:
+#   CLOUDFLARE_API_TOKEN   an API token created from the "Edit Cloudflare
+#                          Workers" template
+#   CLOUDFLARE_ACCOUNT_ID  the account id shown on the Workers overview page
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # One deploy at a time; a newer push cancels an older run still in progress.
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Typecheck and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      - name: Start a local Worker
+        run: |
+          npx wrangler dev --port 8787 > wrangler.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -sf -o /dev/null http://localhost:8787/; then exit 0; fi
+            sleep 1
+          done
+          echo "local Worker did not start"; cat wrangler.log; exit 1
+
+      - name: Server-side suites
+        run: |
+          npm run test:api
+          npm run test:security
+          npm run test:crypto
+          npm run test:host
+          npm run test:knock
+          ABANDONED_PORT=8791 npm run test:abandoned
+
+      - name: Worker log
+        if: failure()
+        run: cat wrangler.log
+
+  deploy:
+    name: Deploy to Cloudflare
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy
