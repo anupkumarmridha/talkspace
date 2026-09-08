@@ -92,11 +92,17 @@ jobs:
         run: |
           set -u
           echo "token length: ${#CLOUDFLARE_API_TOKEN}  account id length: ${#CLOUDFLARE_ACCOUNT_ID}"
-          verify=$(curl -s https://api.cloudflare.com/client/v4/user/tokens/verify \
+          # Account-owned tokens (prefix cfat_) verify against the account;
+          # older user tokens verify against the user. Accept either.
+          verify=$(curl -s "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/tokens/verify" \
             -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}")
-          echo "token verify: $(echo "$verify" | jq -c '{success, status: .result.status, errors}')"
+          if ! echo "$verify" | jq -e '.success == true' > /dev/null; then
+            verify=$(curl -s https://api.cloudflare.com/client/v4/user/tokens/verify \
+              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}")
+          fi
+          echo "token verify: $(echo "$verify" | jq -c '{success, status: .result.status, errors: [.errors[]?.message]}')"
           echo "$verify" | jq -e '.success == true and .result.status == "active"' > /dev/null \
-            || { echo "::error::The API token is not valid. Create one with the 'Edit Cloudflare Workers' template and re-run 'gh secret set CLOUDFLARE_API_TOKEN'."; exit 1; }
+            || { echo "::error::The API token is not valid or not active. Create one with Account · Workers Scripts · Edit and re-run 'gh secret set CLOUDFLARE_API_TOKEN'."; exit 1; }
 
           # The same call `wrangler deploy` makes first: needs Workers Scripts
           # on this account, and proves the account id belongs to the token.
