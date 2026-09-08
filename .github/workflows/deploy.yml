@@ -82,6 +82,29 @@ jobs:
 
       - run: npm ci
 
+      # Wrangler's "Authentication error [code: 10000]" says nothing about
+      # *why*. Ask Cloudflare directly first, so a bad token or a mismatched
+      # account id is named in plain words. Secrets are masked in the log.
+      - name: Check Cloudflare credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -u
+          echo "token length: ${#CLOUDFLARE_API_TOKEN}  account id length: ${#CLOUDFLARE_ACCOUNT_ID}"
+          verify=$(curl -s https://api.cloudflare.com/client/v4/user/tokens/verify \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}")
+          echo "token verify: $(echo "$verify" | jq -c '{success, status: .result.status, errors}')"
+          echo "$verify" | jq -e '.success == true and .result.status == "active"' > /dev/null \
+            || { echo "::error::The API token is not valid. Create one with the 'Edit Cloudflare Workers' template and re-run 'gh secret set CLOUDFLARE_API_TOKEN'."; exit 1; }
+
+          accounts=$(curl -s "https://api.cloudflare.com/client/v4/accounts?per_page=50" \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}")
+          echo "accounts visible to token: $(echo "$accounts" | jq -c '{success, count: (.result | length), names: [.result[].name], errors}')"
+          echo "$accounts" | jq -e --arg id "$CLOUDFLARE_ACCOUNT_ID" '.result[] | select(.id == $id)' > /dev/null \
+            || { echo "::error::CLOUDFLARE_ACCOUNT_ID is not an account this token can see. Copy the Account ID from the Workers & Pages overview (not a Zone ID) and re-run 'gh secret set CLOUDFLARE_ACCOUNT_ID'."; exit 1; }
+          echo "credentials look good"
+
       - name: Deploy
         uses: cloudflare/wrangler-action@v3
         with:
